@@ -2142,7 +2142,13 @@ static int msm_pdev_probe(struct platform_device *pdev)
 	INIT_WORK(&resume_work, dsi_resume_work);
 	INIT_WORK(&early_on_for_phone_call_work, dsi_early_on_for_phone_call_work);
 
-	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
+	/* on all devices that I am aware of, iommu's which can map
+	 * any address the cpu can see are used:
+	 */
+	ret = dma_set_mask_and_coherent(&pdev->dev, ~0);
+	if (ret)
+		return ret;
+
 	return component_master_add_with_match(&pdev->dev, &msm_drm_ops, match);
 }
 
