@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -2142,6 +2142,9 @@ static int msm_pdev_probe(struct platform_device *pdev)
 	INIT_WORK(&resume_work, dsi_resume_work);
 	INIT_WORK(&early_on_for_phone_call_work, dsi_early_on_for_phone_call_work);
 
+
+	if (!match)
+		return -ENODEV;
 	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
 	return component_master_add_with_match(&pdev->dev, &msm_drm_ops, match);
 }

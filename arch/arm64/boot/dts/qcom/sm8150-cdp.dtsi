@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -380,9 +380,12 @@
 	vdd-hba-supply = <&ufs_phy_gdsc>;
 	vdd-hba-fixed-regulator;
 	vcc-supply = <&pm8150_l10>;
-	vcc-voltage-level = <2950000 2960000>;
+	vcc-voltage-level = <2504000 2950000>;
+	vcc-low-voltage-sup;
+	vccq-supply = <&pm8150_l9>;
 	vccq2-supply = <&pm8150_s4>;
 	vcc-max-microamp = <750000>;
+	vccq-max-microamp = <700000>;
 	vccq2-max-microamp = <750000>;
 
 	qcom,vddp-ref-clk-supply = <&pm8150_l9>;
@@ -616,6 +619,7 @@
 		polling-delay = <0>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150b_adc_tm ADC_AMUX_THM1_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
@@ -630,6 +634,7 @@
 		polling-delay = <0>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150_adc_tm ADC_XO_THERM_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
@@ -644,6 +649,7 @@
 		polling-delay = <1000>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150_adc_tm ADC_AMUX_THM1_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
@@ -658,6 +664,7 @@
 		polling-delay = <1000>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150_adc_tm ADC_AMUX_THM2_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
@@ -672,6 +679,7 @@
 		polling-delay = <0>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150l_adc_tm ADC_AMUX_THM1_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
@@ -686,6 +694,7 @@
 		polling-delay = <0>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150l_adc_tm ADC_AMUX_THM2_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
@@ -700,6 +709,7 @@
 		polling-delay = <0>;
 		thermal-governor = "user_space";
 		thermal-sensors = <&pm8150l_adc_tm ADC_AMUX_THM3_PU2>;
+		wake-capable-sensor;
 		trips {
 			active-config0 {
 				temperature = <125000>;
