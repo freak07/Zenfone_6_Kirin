@@ -455,16 +455,12 @@ int mmc_clk_update_freq(struct mmc_host *host,
 		goto invalid_state;
 	}
 
-	MMC_TRACE(host, "clock scale state %d freq %lu\n",
-			state, freq);
 	err = host->bus_ops->change_bus_speed(host, &freq);
 	if (!err)
 		host->clk_scaling.curr_freq = freq;
 	else
 		pr_err("%s: %s: failed (%d) at freq=%lu\n",
 			mmc_hostname(host), __func__, err, freq);
-	MMC_TRACE(host, "clock scale state %d freq %lu done with err %d\n",
-			state, freq, err);
 
 invalid_state:
 	if (cmdq_mode) {
@@ -782,7 +778,6 @@ int mmc_init_clk_scaling(struct mmc_host *host)
 		host->ios.clock);
 
 	host->clk_scaling.enable = true;
-	host->clk_scaling.is_suspended = false;
 
 	return err;
 }
@@ -4221,16 +4216,22 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 
 	/* Order's important: probe SDIO, then SD, then MMC */
 	if (!(host->caps2 & MMC_CAP2_NO_SDIO))
-		if (!mmc_attach_sdio(host))
+		if (!mmc_attach_sdio(host)){
+			pr_info("%s: SDIO completed\n", mmc_hostname(host));
 			return 0;
+		}
 
 	if (!(host->caps2 & MMC_CAP2_NO_SD))
-		if (!mmc_attach_sd(host))
+		if (!mmc_attach_sd(host)){
+			pr_info("%s: SD completed\n", mmc_hostname(host));
 			return 0;
+		}
 
 	if (!(host->caps2 & MMC_CAP2_NO_MMC))
-		if (!mmc_attach_mmc(host))
+		if (!mmc_attach_mmc(host)){
+			pr_info("%s: EMMC completed\n", mmc_hostname(host));
 			return 0;
+		}
 
 	mmc_power_off(host);
 	return -EIO;

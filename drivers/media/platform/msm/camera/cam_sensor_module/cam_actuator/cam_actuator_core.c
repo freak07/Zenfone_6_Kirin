@@ -17,8 +17,7 @@
 #include "cam_trace.h"
 #include "cam_res_mgr_api.h"
 #include "cam_common_util.h"
-#include "cam_packet_util.h"
-
+#include "asus_actuator.h"
 int32_t cam_actuator_construct_default_power_setting(
 	struct cam_sensor_power_ctrl_t *power_info)
 {
@@ -63,6 +62,7 @@ free_power_settings:
 static int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl)
 {
 	int rc = 0;
+#if 0
 	struct cam_hw_soc_info  *soc_info =
 		&a_ctrl->soc_info;
 	struct cam_actuator_soc_private  *soc_private;
@@ -115,6 +115,7 @@ static int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl)
 		return rc;
 	}
 
+#endif
 	rc = camera_io_init(&a_ctrl->io_master_info);
 	if (rc < 0)
 		CAM_ERR(CAM_ACTUATOR, "cci init failed: rc: %d", rc);
@@ -125,6 +126,7 @@ static int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl)
 static int32_t cam_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl)
 {
 	int32_t rc = 0;
+#if 0
 	struct cam_sensor_power_ctrl_t *power_info;
 	struct cam_hw_soc_info *soc_info = &a_ctrl->soc_info;
 	struct cam_actuator_soc_private  *soc_private;
@@ -148,11 +150,40 @@ static int32_t cam_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl)
 		CAM_ERR(CAM_ACTUATOR, "power down the core is failed:%d", rc);
 		return rc;
 	}
-
+#endif
 	camera_io_release(&a_ctrl->io_master_info);
 
 	return rc;
 }
+//ASUS_BSP Zhengwei +++ "porting actuator"
+static void override_i2c_write_setting(struct camera_io_master *io_master_info, struct cam_sensor_i2c_reg_setting * setting, const char * op_string)
+{
+	int i;
+	int32_t dac;
+	//struct cam_actuator_ctrl_t *a_ctrl = container_of(io_master_info,struct cam_actuator_ctrl_t,io_master_info);
+	for(i=0;i<setting->size;i++)
+	{
+		CAM_DBG(CAM_ACTUATOR,"OP %s, [%d/%d], addr[0x%x] = 0x%x",
+					op_string,
+					i+1,setting->size,
+					setting->reg_setting[i].reg_addr,
+					setting->reg_setting[i].reg_data
+				);
+		if(setting->reg_setting[i].reg_addr == 0x84)
+		{
+			setting->reg_setting[i].reg_data = setting->reg_setting[i].reg_data & 0x0FFF;
+			if(setting->reg_setting[i].reg_data == 0x0)
+				setting->reg_setting[i].reg_data = 0x1;
+			dac = setting->reg_setting[i].reg_data;
+			//a_ctrl->lens_pos = dac;
+			CAM_DBG(CAM_ACTUATOR,"DAC 0x%x, lens_pos %d",
+					 setting->reg_setting[i].reg_data,
+					 dac
+					 );
+		}
+	}
+}
+//ASUS_BSP Zhengwei --- "porting actuator"
 
 static int32_t cam_actuator_i2c_modes_util(
 	struct camera_io_master *io_master_info,
@@ -162,6 +193,7 @@ static int32_t cam_actuator_i2c_modes_util(
 	uint32_t i, size;
 
 	if (i2c_list->op_code == CAM_SENSOR_I2C_WRITE_RANDOM) {
+		override_i2c_write_setting(io_master_info,&(i2c_list->i2c_settings),"WRITE_RANDOM");
 		rc = camera_io_dev_write(io_master_info,
 			&(i2c_list->i2c_settings));
 		if (rc < 0) {
@@ -171,6 +203,7 @@ static int32_t cam_actuator_i2c_modes_util(
 			return rc;
 		}
 	} else if (i2c_list->op_code == CAM_SENSOR_I2C_WRITE_SEQ) {
+		override_i2c_write_setting(io_master_info,&(i2c_list->i2c_settings),"WRITE_SEQ");
 		rc = camera_io_dev_write_continuous(
 			io_master_info,
 			&(i2c_list->i2c_settings),
@@ -182,6 +215,7 @@ static int32_t cam_actuator_i2c_modes_util(
 			return rc;
 			}
 	} else if (i2c_list->op_code == CAM_SENSOR_I2C_WRITE_BURST) {
+		override_i2c_write_setting(io_master_info,&(i2c_list->i2c_settings),"WRITE_BURST");
 		rc = camera_io_dev_write_continuous(
 			io_master_info,
 			&(i2c_list->i2c_settings),
@@ -215,12 +249,12 @@ static int32_t cam_actuator_i2c_modes_util(
 }
 
 int32_t cam_actuator_slaveInfo_pkt_parser(struct cam_actuator_ctrl_t *a_ctrl,
-	uint32_t *cmd_buf, size_t len)
+	uint32_t *cmd_buf)
 {
 	int32_t rc = 0;
 	struct cam_cmd_i2c_info *i2c_info;
 
-	if (!a_ctrl || !cmd_buf || (len < sizeof(struct cam_cmd_i2c_info))) {
+	if (!a_ctrl || !cmd_buf) {
 		CAM_ERR(CAM_ACTUATOR, "Invalid Args");
 		return -EINVAL;
 	}
@@ -262,7 +296,13 @@ int32_t cam_actuator_apply_settings(struct cam_actuator_ctrl_t *a_ctrl,
 		CAM_ERR(CAM_ACTUATOR, " Invalid settings");
 		return -EINVAL;
 	}
-
+	//ASUS_BSP +++ Zhengwei "enable/disable vcm move dynamically for debug"
+	if(!asus_allow_vcm_move())
+	{
+		CAM_ERR(CAM_ACTUATOR,"OIS not allow vcm move, bypass vcm writing!\n");
+		return 0;
+	}
+	//ASUS_BSP --- Zhengwei "enable/disable vcm move dynamically for debug"
 	list_for_each_entry(i2c_list,
 		&(i2c_set->list_head), list) {
 		rc = cam_actuator_i2c_modes_util(
@@ -414,7 +454,6 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 	int32_t  i = 0;
 	uint32_t total_cmd_buf_in_bytes = 0;
 	size_t   len_of_buff = 0;
-	size_t   remain_len = 0;
 	uint32_t *offset = NULL;
 	uint32_t *cmd_buf = NULL;
 	uintptr_t generic_ptr;
@@ -452,29 +491,18 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 		return rc;
 	}
 
-	remain_len = len_of_buff;
-	if ((sizeof(struct cam_packet) > len_of_buff) ||
-		((size_t)config.offset >= len_of_buff -
-		sizeof(struct cam_packet))) {
+	if (config.offset > len_of_buff) {
 		CAM_ERR(CAM_ACTUATOR,
-			"Inval cam_packet strut size: %zu, len_of_buff: %zu",
-			 sizeof(struct cam_packet), len_of_buff);
+			"offset is out of bounds: offset: %lld len: %zu",
+			config.offset, len_of_buff);
 		rc = -EINVAL;
 		goto rel_pkt_buf;
 	}
 
-	remain_len -= (size_t)config.offset;
 	csl_packet = (struct cam_packet *)
 			(generic_pkt_ptr + (uint32_t)config.offset);
-
-	if (cam_packet_util_validate_packet(csl_packet,
-		remain_len)) {
-		CAM_ERR(CAM_ACTUATOR, "Invalid packet params");
-		rc = -EINVAL;
-		goto rel_pkt_buf;
-	}
-
-	CAM_DBG(CAM_ACTUATOR, "Pkt opcode: %d",	csl_packet->header.op_code);
+	CAM_DBG(CAM_ACTUATOR, "Pkt opcode: %d",
+			csl_packet->header.op_code);
 
 	if ((csl_packet->header.op_code & 0xFFFFFF) !=
 		CAM_ACTUATOR_PACKET_OPCODE_INIT &&
@@ -483,8 +511,7 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 		CAM_DBG(CAM_ACTUATOR,
 			"reject request %lld, last request to flush %lld",
 			csl_packet->header.request_id, a_ctrl->last_flush_req);
-		rc = -EINVAL;
-		goto rel_pkt_buf;
+		return -EINVAL;
 	}
 
 	if (csl_packet->header.request_id > a_ctrl->last_flush_req)
@@ -512,15 +539,6 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 				CAM_ERR(CAM_ACTUATOR, "invalid cmd buf");
 				goto rel_cmd_buf;
 			}
-			if ((len_of_buff < sizeof(struct common_header)) ||
-				(cmd_desc[i].offset > (len_of_buff -
-				sizeof(struct common_header)))) {
-				CAM_ERR(CAM_ACTUATOR,
-					"Invalid length for sensor cmd");
-				rc = -EINVAL;
-				goto rel_cmd_buf;
-			}
-			remain_len = len_of_buff - cmd_desc[i].offset;
 			cmd_buf += cmd_desc[i].offset / sizeof(uint32_t);
 			cmm_hdr = (struct common_header *)cmd_buf;
 
@@ -529,7 +547,7 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 				CAM_DBG(CAM_ACTUATOR,
 					"Received slave info buffer");
 				rc = cam_actuator_slaveInfo_pkt_parser(
-					a_ctrl, cmd_buf, remain_len);
+					a_ctrl, cmd_buf);
 				if (rc < 0) {
 					CAM_ERR(CAM_ACTUATOR,
 					"Failed to parse slave info: %d", rc);
@@ -543,7 +561,7 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 				rc = cam_sensor_update_power_settings(
 					cmd_buf,
 					total_cmd_buf_in_bytes,
-					power_info, remain_len);
+					power_info);
 				if (rc) {
 					CAM_ERR(CAM_ACTUATOR,
 					"Failed:parse power settings: %d",

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -42,12 +42,28 @@
 #define MAX_PANEL_JITTER		10
 #define DEFAULT_PANEL_PREFILL_LINES	25
 
+extern int fts_ts_suspend(void);
+extern int fts_power_source_ctrl_global(int enable);
+extern void asus_lcd_dim_conf_apply(void);
+extern void asus_wled_fsc_validate(void);
+extern int g_msm_drv_shutdown_in_progress;
+
+extern char asus_lcd_cabc_mode[2];
+extern int asus_lcd_dimming_on;
+extern int asus_lcd_early_backlight;
+extern int asus_lcd_bridge_enable;
+
 enum dsi_dsc_ratio_type {
 	DSC_8BPC_8BPP,
 	DSC_10BPC_8BPP,
 	DSC_12BPC_8BPP,
 	DSC_RATIO_TYPE_MAX
 };
+
+int lastBL = 1023;
+bool first_boot = true;
+int asus_lcd_bridge_enable = 0;
+struct dsi_panel* g_panel = NULL;
 
 static u32 dsi_dsc_rc_buf_thresh[] = {0x0e, 0x1c, 0x2a, 0x38, 0x46, 0x54,
 		0x62, 0x69, 0x70, 0x77, 0x79, 0x7b, 0x7d, 0x7e};
@@ -98,6 +114,19 @@ static char dsi_dsc_rc_range_max_qp_1_1_scr1[][15] = {
  */
 static char dsi_dsc_rc_range_bpg_offset[] = {2, 0, 0, -2, -4, -6, -8, -8,
 		-8, -10, -10, -12, -12, -12, -12};
+
+bool bl_off_to_wait_on = false;
+
+bool fts_gesture_check(void);
+
+// ASUS_BSP: low backlight controller switch
+#define WLED_MAX_LEVEL_ENABLE           4095
+#define WLED_MIN_LEVEL_DISABLE          0
+#define LCD_BL_THRESHOLD_BOE            80
+static bool g_bl_full_dcs = false;
+static int g_last_bl = 0x0;
+static int g_bl_threshold = LCD_BL_THRESHOLD_BOE;
+static int g_wled_dimming_div = 10;
 
 int dsi_dsc_create_pps_buf_cmd(struct msm_display_dsc_info *dsc, char *buf,
 				int pps_id)
@@ -433,11 +462,14 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 {
 	int rc = 0;
 
-	rc = dsi_pwr_enable_regulator(&panel->power_info, true);
-	if (rc) {
-		pr_err("[%s] failed to enable vregs, rc=%d\n", panel->name, rc);
-		goto exit;
-	}
+	if (!fts_gesture_check()) {
+		printk("[Display] gesture disabled, enable regulator\n");
+		rc = dsi_pwr_enable_regulator(&panel->power_info, true);
+		if (rc) {
+			pr_err("[%s] failed to enable vregs, rc=%d\n", panel->name, rc);
+			goto exit;
+		}
+ 	}
 
 	rc = dsi_panel_set_pinctrl_state(panel, true);
 	if (rc) {
@@ -473,11 +505,14 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 {
 	int rc = 0;
 
+	printk("[Display] dsi_panel_power_off !!!\n");
+
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
-	if (gpio_is_valid(panel->reset_config.reset_gpio))
-		gpio_set_value(panel->reset_config.reset_gpio, 0);
+	if (!fts_gesture_check())
+		if (gpio_is_valid(panel->reset_config.reset_gpio))
+			gpio_set_value(panel->reset_config.reset_gpio, 0);
 
 	if (gpio_is_valid(panel->reset_config.lcd_mode_sel_gpio))
 		gpio_set_value(panel->reset_config.lcd_mode_sel_gpio, 0);
@@ -488,9 +523,20 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 		       rc);
 	}
 
-	rc = dsi_pwr_enable_regulator(&panel->power_info, false);
-	if (rc)
-		pr_err("[%s] failed to enable vregs, rc=%d\n", panel->name, rc);
+	fts_ts_suspend();
+	msleep(3);//power down after reset larger than 3ms
+
+	if (g_msm_drv_shutdown_in_progress) {
+		printk("[Display] shutdown in progress, pull down TP power rail\n");
+		fts_power_source_ctrl_global(0);
+	}
+
+	if (!fts_gesture_check()) {
+		printk("[Display] gesture disabled, disable regulator\n");
+		rc = dsi_pwr_enable_regulator(&panel->power_info, false);
+		if (rc)
+			pr_err("[%s] failed to enable vregs, rc=%d\n", panel->name, rc);
+	}
 
 	return rc;
 }
@@ -593,16 +639,17 @@ error:
 static int dsi_panel_wled_register(struct dsi_panel *panel,
 		struct dsi_backlight_config *bl)
 {
+	int rc = 0;
 	struct backlight_device *bd;
 
 	bd = backlight_device_get_by_type(BACKLIGHT_RAW);
 	if (!bd) {
-		pr_debug("[%s] backlight device list empty\n", panel->name);
-		return -EPROBE_DEFER;
+		pr_err("[%s] fail raw backlight register\n", panel->name);
+		rc = -EINVAL;
 	}
 
 	bl->raw_bd = bd;
-	return 0;
+	return rc;
 }
 
 static int dsi_panel_update_backlight(struct dsi_panel *panel,
@@ -622,24 +669,134 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	if (rc < 0)
 		pr_err("failed to update dcs backlight:%d\n", bl_lvl);
 
+	/* ASUS BSP Display +++ */
+	if (bl_lvl != 0)
+		lastBL = (int)bl_lvl;
+	/* ASUS BSP Display +++ */
+
+	//pr_err("update dcs backlight:%d\n", bl_lvl);
+
 	return rc;
+}
+
+//
+// dimming WLED brightness change
+//
+static void asus_lcd_led_trigger_dim(struct dsi_backlight_config *bl, int from, int to)
+{
+	int temp;
+	int wled_level = 0;
+
+	for (temp = 0; temp <= g_wled_dimming_div; temp++) {
+		wled_level = (bl->raw_bd->props.max_brightness * (from * 10 + (to - from) * temp)) /\
+				(g_bl_threshold * g_wled_dimming_div);
+		backlight_device_set_brightness(bl->raw_bd, wled_level);
+		msleep(10);
+		pr_debug("[Display] wled set to %d/%d\n", wled_level, bl->raw_bd->props.max_brightness);
+	}
+}
+
+void dsi_panel_set_backlight_asus_logic(struct dsi_panel *panel, u32 bl_level)
+{
+	struct dsi_backlight_config *bl = &panel->bl_config;
+
+	printk("[Display] backlight request: value = %d\n", bl_level);
+
+	if (bl_level == 0) {
+		backlight_device_set_brightness(bl->raw_bd, WLED_MIN_LEVEL_DISABLE);
+		printk("[Display] g_bl_full_dcs ctrl disable\n");
+		g_bl_full_dcs = false;
+	} else if (bl_level < g_bl_threshold) { /*wled control*/
+		if (g_last_bl == 0) {
+			printk("[Display] system resume set BL wled directly\n");
+			backlight_device_set_brightness(bl->raw_bd, 4095 * bl_level / g_bl_threshold);
+			dsi_panel_update_backlight(panel, g_bl_threshold);
+		} else if (bl_level < g_last_bl) {
+			if (g_bl_full_dcs) { // last backlight is full DCS control, set it to threshold
+				dsi_panel_update_backlight(panel, g_bl_threshold);
+			}
+			asus_lcd_led_trigger_dim(bl,
+				(g_last_bl >= g_bl_threshold) ? g_bl_threshold : g_last_bl, bl_level);
+		} else if (g_last_bl < bl_level) {
+			asus_lcd_led_trigger_dim(bl, g_last_bl, bl_level);
+		} else {
+			printk("[Display] Bypass backlight request with same level\n");
+		}
+		g_bl_full_dcs = false;
+	} else { /*dcs control*/
+		if (g_last_bl == 0) {
+			backlight_device_set_brightness(bl->raw_bd, WLED_MAX_LEVEL_ENABLE);
+			printk("[Display] g_bl_full_dcs ctrl enable\n");
+			dsi_panel_update_backlight(panel, bl_level);
+		} else {
+			dsi_panel_update_backlight(panel, bl_level);
+			if (!g_bl_full_dcs) // last time is semi-WLED control
+				asus_lcd_led_trigger_dim(bl, g_last_bl, g_bl_threshold);
+		}
+		g_bl_full_dcs = true;
+	}
+}
+
+void asus_lcd_trigger_early_backlight_wq(u32 level)
+{
+	struct dsi_panel* panel = g_panel;
+
+	if (!g_panel)
+		return;
+
+	panel->early_bl_level = level;
+	queue_work(panel->early_bl_workqueue, &panel->early_bl_work);
 }
 
 int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 {
 	int rc = 0;
 	struct dsi_backlight_config *bl = &panel->bl_config;
+	struct mipi_dsi_device *dsi;
 
 	if (panel->host_config.ext_bridge_mode)
 		return 0;
 
+	mutex_lock(&panel->bl_lock);
+
 	pr_debug("backlight type:%d lvl:%d\n", bl->type, bl_lvl);
+	if (first_boot) {
+		if (bl_lvl == 4095) {
+			goto finally;
+		}
+
+		printk("[Display] setting WLED to max, backlight = %d\n", bl_lvl);
+		asus_wled_fsc_validate();
+		dsi_panel_update_backlight(panel, bl_lvl);
+		rc = backlight_device_set_brightness(bl->raw_bd, bl->raw_bd->props.max_brightness);
+		first_boot = false;
+		g_last_bl = bl_lvl;
+		goto finally;
+	}
+
+	if (bl_lvl >= 4079)
+		bl_lvl = 4079;
+
+#if 0
+	/*
+	 * lcd birdge is going to enable and both bl level and last bl level
+	 * is zero means this is initialized from crtc
+	 * < this code is disabled, and should not be included in build >
+	 */
+	if (asus_lcd_bridge_enable && !bl_lvl && !g_last_bl) {
+		printk("[Display] this is backlight 0 from display initial, do early backlight here\n");
+		asus_lcd_trigger_early_backlight_wq(32);
+		goto finally;
+	}
+#endif
+
 	switch (bl->type) {
 	case DSI_BACKLIGHT_WLED:
 		rc = backlight_device_set_brightness(bl->raw_bd, bl_lvl);
 		break;
 	case DSI_BACKLIGHT_DCS:
-		rc = dsi_panel_update_backlight(panel, bl_lvl);
+		//rc = dsi_panel_update_backlight(panel, bl_lvl);
+		dsi_panel_set_backlight_asus_logic(panel, bl_lvl);
 		break;
 	case DSI_BACKLIGHT_EXTERNAL:
 		break;
@@ -648,7 +805,40 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		rc = -ENOTSUPP;
 	}
 
+	if (bl_lvl == 0 && g_last_bl != 0) {
+		printk("[Display] Backlight set 0 to turn off\n");
+		bl_off_to_wait_on = true;
+	}
+
+	if (bl_off_to_wait_on && bl_lvl) {
+		dsi = &panel->mipi_device;
+		printk("[Display] Backlight first set non-zero value to turn on: %d\n", bl_lvl);
+		bl_off_to_wait_on = false;
+
+		if (asus_lcd_cabc_mode[1] == 3)
+			rc = mipi_dsi_dcs_set_display_cabc(dsi);
+	}
+
+	g_last_bl = bl_lvl;
+
+finally:
+	mutex_unlock(&panel->bl_lock);
+
 	return rc;
+}
+
+void dsi_panel_set_backlight_work(struct work_struct *work)
+{
+	struct dsi_panel *panel;
+
+	panel = container_of(work, struct dsi_panel, early_bl_work);
+	if (!panel) {
+		printk("[Display] cannot get panel struct from work\n");
+		return;
+	}
+
+	printk("[Display] try to set early backlight\n");
+	dsi_panel_set_backlight(panel, panel->early_bl_level);
 }
 
 static u32 dsi_panel_get_brightness(struct dsi_backlight_config *bl)
@@ -699,6 +889,7 @@ static int dsi_panel_bl_register(struct dsi_panel *panel)
 		rc = dsi_panel_wled_register(panel, bl);
 		break;
 	case DSI_BACKLIGHT_DCS:
+		rc = dsi_panel_wled_register(panel, bl);
 		break;
 	case DSI_BACKLIGHT_EXTERNAL:
 		break;
@@ -1077,44 +1268,6 @@ static int dsi_panel_parse_misc_host_config(struct dsi_host_common_cfg *host,
 	return 0;
 }
 
-static void dsi_panel_parse_split_link_config(struct dsi_host_common_cfg *host,
-					struct dsi_parser_utils *utils,
-					const char *name)
-{
-	int rc = 0;
-	u32 val = 0;
-	bool supported = false;
-	struct dsi_split_link_config *split_link = &host->split_link;
-
-	supported = utils->read_bool(utils->data, "qcom,split-link-enabled");
-
-	if (!supported) {
-		pr_debug("[%s] Split link is not supported\n", name);
-		split_link->split_link_enabled = false;
-		return;
-	}
-
-	rc = utils->read_u32(utils->data, "qcom,sublinks-count", &val);
-	if (rc || val < 1) {
-		pr_debug("[%s] Using default sublinks count\n", name);
-		split_link->num_sublinks = 2;
-	} else {
-		split_link->num_sublinks = val;
-	}
-
-	rc = utils->read_u32(utils->data, "qcom,lanes-per-sublink", &val);
-	if (rc || val < 1) {
-		pr_debug("[%s] Using default lanes per sublink\n", name);
-		split_link->lanes_per_sublink = 2;
-	} else {
-		split_link->lanes_per_sublink = val;
-	}
-
-	pr_debug("[%s] Split link is supported %d-%d\n", name,
-		split_link->num_sublinks, split_link->lanes_per_sublink);
-	split_link->split_link_enabled = true;
-}
-
 static int dsi_panel_parse_host_config(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -1160,9 +1313,6 @@ static int dsi_panel_parse_host_config(struct dsi_panel *panel)
 		goto error;
 	}
 
-	dsi_panel_parse_split_link_config(&panel->host_config, utils,
-						panel->name);
-
 error:
 	return rc;
 }
@@ -1185,48 +1335,6 @@ static int dsi_panel_parse_qsync_caps(struct dsi_panel *panel,
 	return rc;
 }
 
-static int dsi_panel_parse_dyn_clk_caps(struct dsi_panel *panel)
-{
-	int rc = 0;
-	bool supported = false;
-	struct dsi_dyn_clk_caps *dyn_clk_caps = &panel->dyn_clk_caps;
-	struct dsi_parser_utils *utils = &panel->utils;
-	const char *name = panel->name;
-
-	supported = utils->read_bool(utils->data, "qcom,dsi-dyn-clk-enable");
-
-	if (!supported) {
-		dyn_clk_caps->dyn_clk_support = false;
-		return rc;
-	}
-
-	dyn_clk_caps->bit_clk_list_len = utils->count_u32_elems(utils->data,
-			"qcom,dsi-dyn-clk-list");
-
-	if (dyn_clk_caps->bit_clk_list_len < 1) {
-		pr_err("[%s] failed to get supported bit clk list\n", name);
-		return -EINVAL;
-	}
-
-	dyn_clk_caps->bit_clk_list = kcalloc(dyn_clk_caps->bit_clk_list_len,
-			sizeof(u32), GFP_KERNEL);
-	if (!dyn_clk_caps->bit_clk_list)
-		return -ENOMEM;
-
-	rc = utils->read_u32_array(utils->data, "qcom,dsi-dyn-clk-list",
-			dyn_clk_caps->bit_clk_list,
-			dyn_clk_caps->bit_clk_list_len);
-
-	if (rc) {
-		pr_err("[%s] failed to parse supported bit clk list\n", name);
-		return -EINVAL;
-	}
-
-	dyn_clk_caps->dyn_clk_support = true;
-
-	return 0;
-}
-
 static int dsi_panel_parse_dfps_caps(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -1235,7 +1343,7 @@ static int dsi_panel_parse_dfps_caps(struct dsi_panel *panel)
 	struct dsi_parser_utils *utils = &panel->utils;
 	const char *name = panel->name;
 	const char *type;
-	u32 i;
+	u32 val = 0;
 
 	supported = utils->read_bool(utils->data,
 			"qcom,mdss-dsi-pan-enable-dynamic-fps");
@@ -1243,64 +1351,66 @@ static int dsi_panel_parse_dfps_caps(struct dsi_panel *panel)
 	if (!supported) {
 		pr_debug("[%s] DFPS is not supported\n", name);
 		dfps_caps->dfps_support = false;
-		return rc;
-	}
-
-	type = utils->get_property(utils->data,
-			"qcom,mdss-dsi-pan-fps-update", NULL);
-	if (!type) {
-		pr_err("[%s] dfps type not defined\n", name);
-		rc = -EINVAL;
-		goto error;
-	} else if (!strcmp(type, "dfps_suspend_resume_mode")) {
-		dfps_caps->type = DSI_DFPS_SUSPEND_RESUME;
-	} else if (!strcmp(type, "dfps_immediate_clk_mode")) {
-		dfps_caps->type = DSI_DFPS_IMMEDIATE_CLK;
-	} else if (!strcmp(type, "dfps_immediate_porch_mode_hfp")) {
-		dfps_caps->type = DSI_DFPS_IMMEDIATE_HFP;
-	} else if (!strcmp(type, "dfps_immediate_porch_mode_vfp")) {
-		dfps_caps->type = DSI_DFPS_IMMEDIATE_VFP;
 	} else {
-		pr_err("[%s] dfps type is not recognized\n", name);
-		rc = -EINVAL;
-		goto error;
-	}
 
-	dfps_caps->dfps_list_len = utils->count_u32_elems(utils->data,
-				  "qcom,dsi-supported-dfps-list");
-	if (dfps_caps->dfps_list_len < 1) {
-		pr_err("[%s] dfps refresh list not present\n", name);
-		rc = -EINVAL;
-		goto error;
-	}
+		type = utils->get_property(utils->data,
+				       "qcom,mdss-dsi-pan-fps-update",
+				       NULL);
+		if (!type) {
+			pr_err("[%s] dfps type not defined\n", name);
+			rc = -EINVAL;
+			goto error;
+		} else if (!strcmp(type, "dfps_suspend_resume_mode")) {
+			dfps_caps->type = DSI_DFPS_SUSPEND_RESUME;
+		} else if (!strcmp(type, "dfps_immediate_clk_mode")) {
+			dfps_caps->type = DSI_DFPS_IMMEDIATE_CLK;
+		} else if (!strcmp(type, "dfps_immediate_porch_mode_hfp")) {
+			dfps_caps->type = DSI_DFPS_IMMEDIATE_HFP;
+		} else if (!strcmp(type, "dfps_immediate_porch_mode_vfp")) {
+			dfps_caps->type = DSI_DFPS_IMMEDIATE_VFP;
+		} else {
+			pr_err("[%s] dfps type is not recognized\n", name);
+			rc = -EINVAL;
+			goto error;
+		}
 
-	dfps_caps->dfps_list = kcalloc(dfps_caps->dfps_list_len, sizeof(u32),
-			GFP_KERNEL);
-	if (!dfps_caps->dfps_list) {
-		rc = -ENOMEM;
-		goto error;
-	}
+		rc = utils->read_u32(utils->data,
+					  "qcom,mdss-dsi-min-refresh-rate",
+					  &val);
+		if (rc) {
+			pr_err("[%s] Min refresh rate is not defined\n", name);
+			rc = -EINVAL;
+			goto error;
+		}
+		dfps_caps->min_refresh_rate = val;
 
-	rc = utils->read_u32_array(utils->data,
-			"qcom,dsi-supported-dfps-list",
-			dfps_caps->dfps_list,
-			dfps_caps->dfps_list_len);
-	if (rc) {
-		pr_err("[%s] dfps refresh rate list parse failed\n", name);
-		rc = -EINVAL;
-		goto error;
-	}
-	dfps_caps->dfps_support = true;
+		rc = utils->read_u32(utils->data,
+					  "qcom,mdss-dsi-max-refresh-rate",
+					  &val);
+		if (rc) {
+			pr_debug("[%s] Using default refresh rate\n", name);
+			rc = utils->read_u32(utils->data,
+						"qcom,mdss-dsi-panel-framerate",
+						&val);
+			if (rc) {
+				pr_err("[%s] max refresh rate is not defined\n",
+				       name);
+				rc = -EINVAL;
+				goto error;
+			}
+		}
+		dfps_caps->max_refresh_rate = val;
 
-	/* calculate max and min fps */
-	dfps_caps->max_refresh_rate = dfps_caps->dfps_list[0];
-	dfps_caps->min_refresh_rate = dfps_caps->dfps_list[0];
+		if (dfps_caps->min_refresh_rate > dfps_caps->max_refresh_rate) {
+			pr_err("[%s] min rate > max rate\n", name);
+			rc = -EINVAL;
+		}
 
-	for (i = 1; i < dfps_caps->dfps_list_len; i++) {
-		if (dfps_caps->dfps_list[i] < dfps_caps->min_refresh_rate)
-			dfps_caps->min_refresh_rate = dfps_caps->dfps_list[i];
-		else if (dfps_caps->dfps_list[i] > dfps_caps->max_refresh_rate)
-			dfps_caps->max_refresh_rate = dfps_caps->dfps_list[i];
+		pr_debug("[%s] DFPS is supported %d-%d, mode %d\n", name,
+				dfps_caps->min_refresh_rate,
+				dfps_caps->max_refresh_rate,
+				dfps_caps->type);
+		dfps_caps->dfps_support = true;
 	}
 
 error:
@@ -1349,6 +1459,9 @@ static int dsi_panel_parse_video_host_config(struct dsi_video_engine_cfg *cfg,
 
 	cfg->bllp_lp11_en = utils->read_bool(utils->data,
 					"qcom,mdss-dsi-bllp-power-mode");
+
+	cfg->force_clk_lane_hs = of_property_read_bool(utils->data,
+					"qcom,mdss-dsi-force-clock-lane-hs");
 
 	traffic_mode = utils->get_property(utils->data,
 				       "qcom,mdss-dsi-traffic-mode",
@@ -1542,6 +1655,7 @@ error:
 const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-pre-on-command",
 	"qcom,mdss-dsi-on-command",
+	"qcom,mdss-dsi-dim-on-command",
 	"qcom,mdss-dsi-post-panel-on-command",
 	"qcom,mdss-dsi-pre-off-command",
 	"qcom,mdss-dsi-off-command",
@@ -1567,6 +1681,7 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-pre-on-command-state",
+	"qcom,mdss-dsi-on-command-state",
 	"qcom,mdss-dsi-on-command-state",
 	"qcom,mdss-dsi-post-on-command-state",
 	"qcom,mdss-dsi-pre-off-command-state",
@@ -2386,6 +2501,7 @@ static int dsi_panel_parse_phy_timing(struct dsi_display_mode *mode,
 	mode->pixel_clk_khz = (DSI_H_TOTAL_DSC(&mode->timing) *
 			DSI_V_TOTAL(&mode->timing) *
 			mode->timing.refresh_rate) / 1000;
+	printk("[Display] Pixel clk is %d kHz\n", mode->pixel_clk_khz);
 	return rc;
 }
 
@@ -3080,10 +3196,6 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 			pr_err("failed to parse qsync features, rc=%d\n", rc);
 	}
 
-	rc = dsi_panel_parse_dyn_clk_caps(panel);
-	if (rc)
-		pr_err("failed to parse dynamic clk config, rc=%d\n", rc);
-
 	rc = dsi_panel_parse_phy_props(panel);
 	if (rc) {
 		pr_err("failed to parse panel physical dimension, rc=%d\n", rc);
@@ -3129,6 +3241,12 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 
 	drm_panel_init(&panel->drm_panel);
 	mutex_init(&panel->panel_lock);
+
+	// for early backlight
+	mutex_init(&panel->bl_lock);
+	g_panel = panel;
+	panel->early_bl_workqueue = create_singlethread_workqueue("dsi_early_bl");
+	INIT_WORK(&(panel->early_bl_work), dsi_panel_set_backlight_work);
 
 	return panel;
 error:
@@ -3395,9 +3513,6 @@ int dsi_panel_get_mode(struct dsi_panel *panel,
 			goto parse_fail;
 		}
 
-		if (panel->panel_mode == DSI_OP_VIDEO_MODE)
-			mode->priv_info->mdp_transfer_time_us = 0;
-
 		rc = dsi_panel_parse_dsc_params(mode, utils);
 		if (rc) {
 			pr_err("failed to parse dsc params, rc=%d\n", rc);
@@ -3449,7 +3564,6 @@ int dsi_panel_get_host_cfg_for_mode(struct dsi_panel *panel,
 				    struct dsi_host_config *config)
 {
 	int rc = 0;
-	struct dsi_dyn_clk_caps *dyn_clk_caps = &panel->dyn_clk_caps;
 
 	if (!panel || !mode || !config) {
 		pr_err("invalid params\n");
@@ -3477,11 +3591,7 @@ int dsi_panel_get_host_cfg_for_mode(struct dsi_panel *panel,
 	config->video_timing.dsc_enabled = mode->priv_info->dsc_enabled;
 	config->video_timing.dsc = &mode->priv_info->dsc;
 
-	if (dyn_clk_caps->dyn_clk_support)
-		config->bit_clk_rate_hz_override = mode->timing.clk_rate_hz;
-	else
-		config->bit_clk_rate_hz_override = mode->priv_info->clk_rate_hz;
-
+	config->bit_clk_rate_hz_override = mode->priv_info->clk_rate_hz;
 	config->esc_clk_rate_hz = 19200000;
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -3560,14 +3670,10 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
-	if (!panel->panel_initialized)
-		goto exit;
-
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP1);
 	if (rc)
 		pr_err("[%s] failed to send DSI_CMD_SET_LP1 cmd, rc=%d\n",
 		       panel->name, rc);
-exit:
 	mutex_unlock(&panel->panel_lock);
 	return rc;
 }
@@ -3582,14 +3688,10 @@ int dsi_panel_set_lp2(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
-	if (!panel->panel_initialized)
-		goto exit;
-
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP2);
 	if (rc)
 		pr_err("[%s] failed to send DSI_CMD_SET_LP2 cmd, rc=%d\n",
 		       panel->name, rc);
-exit:
 	mutex_unlock(&panel->panel_lock);
 	return rc;
 }
@@ -3604,14 +3706,10 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
-	if (!panel->panel_initialized)
-		goto exit;
-
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_NOLP);
 	if (rc)
 		pr_err("[%s] failed to send DSI_CMD_SET_NOLP cmd, rc=%d\n",
 		       panel->name, rc);
-exit:
 	mutex_unlock(&panel->panel_lock);
 	return rc;
 }
@@ -3803,7 +3901,6 @@ int dsi_panel_send_roi_dcs(struct dsi_panel *panel, int ctrl_idx,
 	mutex_unlock(&panel->panel_lock);
 
 	dsi_panel_destroy_cmd_packets(set);
-	dsi_panel_dealloc_cmd_packets(set);
 
 	return rc;
 }
@@ -3851,6 +3948,7 @@ int dsi_panel_post_switch(struct dsi_panel *panel)
 int dsi_panel_enable(struct dsi_panel *panel)
 {
 	int rc = 0;
+	enum dsi_cmd_set_type cmd_type = DSI_CMD_SET_ON;
 
 	if (!panel) {
 		pr_err("Invalid params\n");
@@ -3859,12 +3957,23 @@ int dsi_panel_enable(struct dsi_panel *panel)
 
 	mutex_lock(&panel->panel_lock);
 
-	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
-	if (rc)
+	if (asus_lcd_dimming_on) {
+		cmd_type = DSI_CMD_SET_DIM_ON;
+	} else {
+		printk("[Display] using no dimming on-command\n");
+		cmd_type = DSI_CMD_SET_ON;
+	}
+
+	rc = dsi_panel_tx_cmd_set(panel, cmd_type);
+
+	// applying dimming setting here
+	asus_lcd_dim_conf_apply();
+
+	if (rc) {
 		pr_err("[%s] failed to send DSI_CMD_SET_ON cmds, rc=%d\n",
 		       panel->name, rc);
-	else
-		panel->panel_initialized = true;
+	}
+	panel->panel_initialized = true;
 	mutex_unlock(&panel->panel_lock);
 	return rc;
 }

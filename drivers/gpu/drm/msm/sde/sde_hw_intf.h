@@ -17,7 +17,6 @@
 #include "sde_hw_mdss.h"
 #include "sde_hw_util.h"
 #include "sde_hw_blk.h"
-#include "sde_kms.h"
 
 struct sde_hw_intf;
 
@@ -193,7 +192,6 @@ struct sde_hw_intf {
 	enum sde_intf idx;
 	const struct sde_intf_cfg *cap;
 	const struct sde_mdss_cfg *mdss;
-	struct split_pipe_cfg cfg;
 
 	/* ops */
 	struct sde_hw_intf_ops ops;

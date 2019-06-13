@@ -936,11 +936,6 @@ static int gsi_startxfer_for_ep(struct usb_ep *ep)
 	struct dwc3_ep *dep = to_dwc3_ep(ep);
 	struct dwc3	*dwc = dep->dwc;
 
-	if (!(dep->flags & DWC3_EP_ENABLED)) {
-		dbg_log_string("ep:%s disabled\n", ep->name);
-		return -ESHUTDOWN;
-	}
-
 	memset(&params, 0, sizeof(params));
 	params.param0 = GSI_TRB_ADDR_BIT_53_MASK | GSI_TRB_ADDR_BIT_55_MASK;
 	params.param0 |= (ep->ep_intr_num << 16);
@@ -1115,11 +1110,6 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 					: (req->num_bufs + 2);
 	struct scatterlist *sg;
 	struct sg_table *sgt;
-
-	if (!(dep->flags & DWC3_EP_ENABLED)) {
-		dbg_log_string("ep:%s disabled\n", ep->name);
-		return -ESHUTDOWN;
-	}
 
 	dep->trb_pool = dma_zalloc_coherent(dwc->sysdev,
 				num_trbs * sizeof(struct dwc3_trb),
@@ -2012,15 +2002,6 @@ static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned int event,
 			dwc3_writel(dwc->regs, DWC3_GEVNTCOUNT((i+1)), 0);
 		}
 		break;
-	case DWC3_GSI_EVT_BUF_CLEAR:
-		dev_dbg(mdwc->dev, "DWC3_GSI_EVT_BUF_CLEAR\n");
-		for (i = 0; i < mdwc->num_gsi_event_buffers; i++) {
-			reg = dwc3_readl(dwc->regs, DWC3_GEVNTCOUNT((i+1)));
-			reg &= DWC3_GEVNTCOUNT_MASK;
-			dwc3_writel(dwc->regs, DWC3_GEVNTCOUNT((i+1)), reg);
-			dbg_log_string("remaining EVNTCOUNT(%d)=%d", i+1, reg);
-		}
-		break;
 	case DWC3_GSI_EVT_BUF_FREE:
 		dev_dbg(mdwc->dev, "DWC3_GSI_EVT_BUF_FREE\n");
 		if (!mdwc->gsi_ev_buff)
@@ -2516,7 +2497,7 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc, bool force_power_collapse)
 		mdwc->lpm_flags |= MDWC3_ASYNC_IRQ_WAKE_CAPABILITY;
 	}
 
-	dev_info(mdwc->dev, "DWC3 in low power mode\n");
+	dev_info(mdwc->dev, "[USB] DWC3 in low power mode\n");
 	dbg_event(0xFF, "Ctl Sus", atomic_read(&dwc->in_lpm));
 
 	/* kick_sm if it is waiting for lpm sequence to finish */
@@ -2676,7 +2657,7 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 		mdwc->lpm_flags &= ~MDWC3_ASYNC_IRQ_WAKE_CAPABILITY;
 	}
 
-	dev_info(mdwc->dev, "DWC3 exited from low power mode\n");
+	dev_info(mdwc->dev, "[USB] DWC3 exited from low power mode\n");
 
 	/* Enable core irq */
 	if (dwc->irq)
@@ -2709,26 +2690,26 @@ static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 	flush_delayed_work(&mdwc->sm_work);
 
 	if (mdwc->id_state == DWC3_ID_FLOAT) {
-		dev_dbg(mdwc->dev, "XCVR: ID set\n");
+		dev_info(mdwc->dev, "[USB] XCVR: ID set\n");
 		set_bit(ID, &mdwc->inputs);
 	} else {
-		dev_dbg(mdwc->dev, "XCVR: ID clear\n");
+		dev_info(mdwc->dev, "[USB] XCVR: ID clear\n");
 		clear_bit(ID, &mdwc->inputs);
 	}
 
 	if (mdwc->vbus_active && !mdwc->in_restart) {
-		dev_dbg(mdwc->dev, "XCVR: BSV set\n");
+		dev_info(mdwc->dev, "[USB] XCVR: BSV set\n");
 		set_bit(B_SESS_VLD, &mdwc->inputs);
 	} else {
-		dev_dbg(mdwc->dev, "XCVR: BSV clear\n");
+		dev_info(mdwc->dev, "[USB] XCVR: BSV clear\n");
 		clear_bit(B_SESS_VLD, &mdwc->inputs);
 	}
 
 	if (mdwc->suspend) {
-		dev_dbg(mdwc->dev, "XCVR: SUSP set\n");
+		dev_info(mdwc->dev, "[USB] XCVR: SUSP set\n");
 		set_bit(B_SUSPEND, &mdwc->inputs);
 	} else {
-		dev_dbg(mdwc->dev, "XCVR: SUSP clear\n");
+		dev_info(mdwc->dev, "[USB] XCVR: SUSP clear\n");
 		clear_bit(B_SUSPEND, &mdwc->inputs);
 	}
 
@@ -3060,6 +3041,12 @@ static int dwc3_msm_id_notifier(struct notifier_block *nb,
 
 	dev_dbg(mdwc->dev, "host:%ld (id:%d) event received\n", event, id);
 
+	if (DWC3_ID_GROUND == id) {
+		dev_info(mdwc->dev, "[USB] ID Set (%ld, %d, %d)\n", event, id, mdwc->id_state);
+	} else {
+		dev_info(mdwc->dev, "[USB] ID Clear (%ld, %d, %d)\n", event, id, mdwc->id_state);
+	}
+
 	mdwc->id_state = id;
 	dbg_event(0xFF, "id_state", mdwc->id_state);
 	queue_work(mdwc->dwc3_wq, &mdwc->resume_work);
@@ -3114,6 +3101,12 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	mdwc->ext_idx = enb->idx;
 
 	dev_dbg(mdwc->dev, "vbus:%ld event received\n", event);
+
+	if (event) {
+		dev_info(mdwc->dev, "[USB] VBus Set (%ld, %%d, %d)\n", event, dwc->dr_mode, mdwc->in_restart);
+	} else {
+		dev_info(mdwc->dev, "[USB] VBus Clear (%ld, %d, %d)\n", event, dwc->dr_mode, mdwc->in_restart);
+	}
 
 	mdwc->vbus_active = event;
 	if ((dwc->dr_mode == USB_DR_MODE_OTG) && !mdwc->in_restart)
@@ -4030,8 +4023,11 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 	}
 
 	if (on) {
-		dev_dbg(mdwc->dev, "%s: turn on host\n", __func__);
+		dev_info(mdwc->dev, "[USB] %s: turn on host\n", __func__);
 
+		// ASUS_BSP +++
+		// We need to set this flag earlier so that we can
+		// apply correct eye-diagram parameters.
 		mdwc->hs_phy->flags |= PHY_HOST_MODE;
 		pm_runtime_get_sync(mdwc->dev);
 		dbg_event(0xFF, "StrtHost gync",
@@ -4114,7 +4110,7 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 		schedule_delayed_work(&mdwc->perf_vote_work,
 				msecs_to_jiffies(1000 * PM_QOS_SAMPLE_SEC));
 	} else {
-		dev_dbg(mdwc->dev, "%s: turn off host\n", __func__);
+		dev_info(mdwc->dev, "[USB] %s: turn off host\n", __func__);
 
 		usb_unregister_atomic_notify(&mdwc->usbdev_nb);
 		if (!IS_ERR_OR_NULL(mdwc->vbus_reg))
@@ -4328,14 +4324,6 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned int mA)
 
 	psy_type = get_psy_type(mdwc);
 	if (psy_type == POWER_SUPPLY_TYPE_USB_FLOAT) {
-		/*
-		 * Do not notify charger driver for any current and
-		 * bail out if suspend happened with float cable
-		 * connected
-		 */
-		if (mA == 2)
-			return 0;
-
 		if (!mA)
 			pval.intval = -ETIMEDOUT;
 		else
@@ -4346,11 +4334,11 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned int mA)
 	if (mdwc->max_power == mA || psy_type != POWER_SUPPLY_TYPE_USB)
 		return 0;
 
+	dev_info(mdwc->dev, "Avail curr from USB = %u\n", mA);
 	/* Set max current limit in uA */
 	pval.intval = 1000 * mA;
 
 set_prop:
-	dev_info(mdwc->dev, "Avail curr from USB = %u\n", mA);
 	ret = power_supply_set_property(mdwc->usb_psy,
 				POWER_SUPPLY_PROP_SDP_CURRENT_MAX, &pval);
 	if (ret) {

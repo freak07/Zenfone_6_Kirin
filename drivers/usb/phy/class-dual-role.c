@@ -82,9 +82,6 @@ static void dual_role_changed_work(struct work_struct *work)
 
 void dual_role_instance_changed(struct dual_role_phy_instance *dual_role)
 {
-	if (!dual_role)
-		return;
-
 	dev_dbg(&dual_role->dev, "%s\n", __func__);
 	pm_wakeup_event(&dual_role->dev, DUAL_ROLE_NOTIFICATION_TIMEOUT);
 	schedule_work(&dual_role->changed_work);
@@ -416,7 +413,7 @@ static umode_t dual_role_attr_is_visible(struct kobject *kobj,
 			if (dual_role->desc->property_is_writeable &&
 			    dual_role_property_is_writeable(dual_role, property)
 			    > 0)
-				mode |= S_IWUSR;
+				mode |= S_IWUSR | S_IWGRP;
 
 			return mode;
 		}

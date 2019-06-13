@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -72,18 +72,10 @@ enum dsi_dms_mode {
 };
 
 struct dsi_dfps_capabilities {
+	bool dfps_support;
 	enum dsi_dfps_type type;
 	u32 min_refresh_rate;
 	u32 max_refresh_rate;
-	u32 *dfps_list;
-	u32 dfps_list_len;
-	bool dfps_support;
-};
-
-struct dsi_dyn_clk_caps {
-	bool dyn_clk_support;
-	u32 *bit_clk_list;
-	u32 bit_clk_list_len;
 };
 
 struct dsi_pinctrl_info {
@@ -165,6 +157,7 @@ struct dsi_panel {
 	struct mipi_dsi_device mipi_device;
 
 	struct mutex panel_lock;
+	struct mutex bl_lock;
 	struct drm_panel drm_panel;
 	struct mipi_dsi_host *host;
 	struct device *parent;
@@ -175,7 +168,6 @@ struct dsi_panel {
 	enum dsi_op_mode panel_mode;
 
 	struct dsi_dfps_capabilities dfps_caps;
-	struct dsi_dyn_clk_caps dyn_clk_caps;
 	struct dsi_panel_phy_props phy_props;
 
 	struct dsi_display_mode *cur_mode;
@@ -204,6 +196,11 @@ struct dsi_panel {
 	enum dsi_dms_mode dms_mode;
 
 	bool sync_broadcast_en;
+
+	// for early backlight
+	u32 early_bl_level;
+	struct workqueue_struct *early_bl_workqueue;
+	struct work_struct early_bl_work;
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)

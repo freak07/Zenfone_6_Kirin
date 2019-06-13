@@ -432,15 +432,22 @@ __setup("androidboot.keymaster=", get_qseecom_keymaster_status);
 
 #define QSEECOM_SCM_EBUSY_WAIT_MS 30
 #define QSEECOM_SCM_EBUSY_MAX_RETRY 67
+#define RETRY_COUNTS_FOR_PANIC		10
 
 static int __qseecom_scm_call2_locked(uint32_t smc_id, struct scm_desc *desc)
 {
 	int ret = 0;
 	int retry_count = 0;
+#ifdef RETRY_COUNTS_FOR_PANIC
+	static int panic_retry = 0;
+#endif
 
 	do {
 		ret = scm_call2_noretry(smc_id, desc);
 		if (ret == -EBUSY) {
+	#ifdef RETRY_COUNTS_FOR_PANIC
+			//pr_warn("The secure world is busy. Wait for a monent.\n");
+	#endif
 			mutex_unlock(&app_access_lock);
 			msleep(QSEECOM_SCM_EBUSY_WAIT_MS);
 			mutex_lock(&app_access_lock);
@@ -449,6 +456,20 @@ static int __qseecom_scm_call2_locked(uint32_t smc_id, struct scm_desc *desc)
 			pr_warn("secure world has been busy for 1 second!\n");
 	} while (ret == -EBUSY &&
 			(retry_count++ < QSEECOM_SCM_EBUSY_MAX_RETRY));
+
+#ifdef RETRY_COUNTS_FOR_PANIC
+	if(ret == -EBUSY && (retry_count >= QSEECOM_SCM_EBUSY_MAX_RETRY) ) {
+		if( panic_retry >= RETRY_COUNTS_FOR_PANIC ) {
+			pr_warn("secure world has been busy for %d second!\n",RETRY_COUNTS_FOR_PANIC*2);
+			panic("secure world busy.");
+			panic_retry = 0;
+		} else {
+			panic_retry ++;
+		}
+	} else {
+		panic_retry = 0;
+	}
+#endif
 	return ret;
 }
 
@@ -2092,7 +2113,6 @@ exit:
 
 	}
 	qseecom.app_block_ref_cnt--;
-	wake_up_interruptible_all(&qseecom.app_block_wq);
 	if (rc)
 		return rc;
 
@@ -2453,15 +2473,24 @@ exit:
  */
 static void __qseecom_reentrancy_check_if_no_app_blocked(uint32_t smc_id)
 {
+	sigset_t new_sigset, old_sigset;
+
 	if (qseecom.qsee_reentrancy_support > QSEE_REENTRANCY_PHASE_0 &&
 		qseecom.qsee_reentrancy_support < QSEE_REENTRANCY_PHASE_3 &&
 		IS_OWNER_TRUSTED_OS(TZ_SYSCALL_OWNER_ID(smc_id))) {
 		/* thread sleep until this app unblocked */
 		while (qseecom.app_block_ref_cnt > 0) {
+			sigfillset(&new_sigset);
+			sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
 			mutex_unlock(&app_access_lock);
-			wait_event_interruptible(qseecom.app_block_wq,
-				(!qseecom.app_block_ref_cnt));
+			do {
+				if (!wait_event_interruptible(
+					qseecom.app_block_wq,
+					(qseecom.app_block_ref_cnt == 0)))
+					break;
+			} while (1);
 			mutex_lock(&app_access_lock);
+			sigprocmask(SIG_SETMASK, &old_sigset, NULL);
 		}
 	}
 }
@@ -2474,15 +2503,24 @@ static void __qseecom_reentrancy_check_if_no_app_blocked(uint32_t smc_id)
 static void __qseecom_reentrancy_check_if_this_app_blocked(
 			struct qseecom_registered_app_list *ptr_app)
 {
+	sigset_t new_sigset, old_sigset;
+
 	if (qseecom.qsee_reentrancy_support) {
 		ptr_app->check_block++;
 		while (ptr_app->app_blocked || qseecom.app_block_ref_cnt > 1) {
 			/* thread sleep until this app unblocked */
+			sigfillset(&new_sigset);
+			sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
 			mutex_unlock(&app_access_lock);
-			wait_event_interruptible(qseecom.app_block_wq,
-				(!ptr_app->app_blocked &&
-				qseecom.app_block_ref_cnt <= 1));
+			do {
+				if (!wait_event_interruptible(
+					qseecom.app_block_wq,
+					(!ptr_app->app_blocked &&
+					qseecom.app_block_ref_cnt <= 1)))
+					break;
+			} while (1);
 			mutex_lock(&app_access_lock);
+			sigprocmask(SIG_SETMASK, &old_sigset, NULL);
 		}
 		ptr_app->check_block--;
 	}
@@ -3378,7 +3416,7 @@ int __qseecom_process_reentrancy(struct qseecom_command_scm_resp *resp,
 		ret = __qseecom_reentrancy_process_incomplete_cmd(data, resp);
 		ptr_app->app_blocked = false;
 		qseecom.app_block_ref_cnt--;
-		wake_up_interruptible_all(&qseecom.app_block_wq);
+		wake_up_interruptible(&qseecom.app_block_wq);
 		if (ret)
 			pr_err("process_incomplete_cmd failed err: %d\n",
 					ret);

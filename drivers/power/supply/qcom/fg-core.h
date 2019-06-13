@@ -30,6 +30,7 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/pmic-voter.h>
+#include <linux/extcon.h>	//ASUS BSP +++
 
 #define fg_dbg(fg, reason, fmt, ...)			\
 	do {							\
@@ -402,7 +403,6 @@ struct fg_memif {
 };
 
 struct fg_dev {
-	struct thermal_zone_device	*tz_dev;
 	struct device		*dev;
 	struct pmic_revid_data	*pmic_rev_id;
 	struct regmap		*regmap;
@@ -461,6 +461,14 @@ struct fg_dev {
 	struct delayed_work	profile_load_work;
 	struct work_struct	status_change_work;
 	struct delayed_work	sram_dump_work;
+//ASUS BSP +++
+	struct extcon_dev	*bat_ver_extcon;
+	struct extcon_dev	*bat_id_extcon;
+//ASUS BSP ---
+};
+
+static const unsigned int asus_fg_extcon_cable[] = {
+	EXTCON_NONE,
 };
 
 /* Debugfs data structures are below */

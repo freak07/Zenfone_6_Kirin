@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -775,8 +775,7 @@ static int ipa3_rx_switch_to_intr_mode(struct ipa3_sys_context *sys)
 	ipa3_dec_release_wakelock();
 	ret = gsi_config_channel_mode(sys->ep->gsi_chan_hdl,
 		GSI_CHAN_MODE_CALLBACK);
-	if ((ret != GSI_STATUS_SUCCESS) &&
-		!atomic_read(&sys->curr_polling_state)) {
+	if (ret != GSI_STATUS_SUCCESS) {
 		if (ret == -GSI_STATUS_PENDING_IRQ) {
 			ipa3_inc_acquire_wakelock();
 			atomic_set(&sys->curr_polling_state, 1);
@@ -1630,7 +1629,7 @@ int ipa3_tx_dp(enum ipa_client_type dst, struct sk_buff *skb,
 	sys = ipa3_ctx->ep[src_ep_idx].sys;
 
 	if (!sys || !sys->ep->valid) {
-		IPAERR_RL("pipe not valid\n");
+		IPAERR("pipe not valid\n");
 		goto fail_gen;
 	}
 
@@ -2399,7 +2398,7 @@ static void ipa3_cleanup_rx(struct ipa3_sys_context *sys)
 		kmem_cache_free(ipa3_ctx->rx_pkt_wrapper_cache, rx_pkt);
 	}
 
-	if (sys->repl) {
+	if (sys->repl->cache) {
 		head = atomic_read(&sys->repl->head_idx);
 		tail = atomic_read(&sys->repl->tail_idx);
 		while (head != tail) {

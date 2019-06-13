@@ -45,7 +45,6 @@ struct traffic_shaper_cfg {
  * @pp_split_idx:   Ping pong index for ping pong split
  * @split_flush_en: Allows both the paths to be flushed when master path is
  *              flushed
- * @split_link_en:  Check if split link is enabled
  */
 struct split_pipe_cfg {
 	bool en;
@@ -54,7 +53,6 @@ struct split_pipe_cfg {
 	enum sde_intf pp_split_slave;
 	u32 pp_split_index;
 	bool split_flush_en;
-	bool split_link_en;
 };
 
 /**

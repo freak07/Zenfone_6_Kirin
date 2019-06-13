@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -262,7 +262,7 @@ static int qpnp_tri_led_set(struct qpnp_led_dev *led)
 		led->blinking = true;
 		led->breathing = false;
 	} else if (led->led_setting.breath) {
-		led->cdev.brightness = LED_FULL;
+		led->cdev.brightness = 102;
 		led->blinking = false;
 		led->breathing = true;
 	} else {
@@ -378,15 +378,13 @@ static ssize_t breath_store(struct device *dev, struct device_attribute *attr,
 	if (rc < 0)
 		return rc;
 
-	cancel_work_sync(&led_cdev->set_brightness_work);
-
 	mutex_lock(&led->lock);
 	if (led->breathing == breath)
 		goto unlock;
 
 	led->led_setting.blink = false;
 	led->led_setting.breath = breath;
-	led->led_setting.brightness = breath ? LED_FULL : LED_OFF;
+	led->led_setting.brightness = breath ? 102 : LED_OFF;
 	rc = qpnp_tri_led_set(led);
 	if (rc < 0)
 		dev_err(led->chip->dev, "Set led failed for %s, rc=%d\n",
