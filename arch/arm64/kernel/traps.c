@@ -60,6 +60,9 @@ static const char *handler[]= {
 
 int show_unhandled_signals = 0;
 
+int g_print_die = 0;
+int g_print_back_trace = 0;
+
 static void dump_backtrace_entry(unsigned long where)
 {
 	printk(" %pS\n", (void *)where);
@@ -102,14 +105,17 @@ void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
 	struct stackframe frame;
 	int skip;
+	g_print_back_trace = 1;
 
 	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
 
 	if (!tsk)
 		tsk = current;
 
-	if (!try_get_task_stack(tsk))
+	if (!try_get_task_stack(tsk)) {
+		g_print_back_trace = 0;
 		return;
+	}
 
 	if (tsk == current) {
 		frame.fp = (unsigned long)__builtin_frame_address(0);
@@ -145,6 +151,7 @@ void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 	} while (!unwind_frame(tsk, &frame));
 
 	put_task_stack(tsk);
+	g_print_back_trace = 0;
 }
 
 void show_stack(struct task_struct *tsk, unsigned long *sp)
@@ -165,14 +172,17 @@ static int __die(const char *str, int err, struct pt_regs *regs)
 	struct task_struct *tsk = current;
 	static int die_counter;
 	int ret;
+	g_print_die = 1;
 
 	pr_emerg("Internal error: %s: %x [#%d]" S_PREEMPT S_SMP "\n",
 		 str, err, ++die_counter);
 
 	/* trap and error numbers are mostly meaningless on ARM */
 	ret = notify_die(DIE_OOPS, str, regs, err, 0, SIGSEGV);
-	if (ret == NOTIFY_STOP)
+	if (ret == NOTIFY_STOP) {
+		g_print_die = 0;
 		return ret;
+	}
 
 	print_modules();
 	__show_regs(regs);
@@ -185,6 +195,7 @@ static int __die(const char *str, int err, struct pt_regs *regs)
 		dump_instr(KERN_EMERG, regs);
 	}
 
+	g_print_die = 0;
 	return ret;
 }
 

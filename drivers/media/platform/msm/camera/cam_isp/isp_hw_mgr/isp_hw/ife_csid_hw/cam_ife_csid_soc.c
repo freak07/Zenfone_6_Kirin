@@ -245,7 +245,8 @@ uint32_t cam_ife_csid_get_vote_level(struct cam_hw_soc_info *soc_info,
 		return CAM_SVS_VOTE;
 
 	for (i = 0; i < CAM_MAX_VOTE; i++) {
-		if (soc_info->clk_rate[i][soc_info->num_clk - 1] >=
+		if (soc_info->clk_level_valid[i] &&
+			soc_info->clk_rate[i][soc_info->src_clk_idx] >=
 			clock_rate) {
 			CAM_DBG(CAM_ISP,
 				"Clock rate %lld, selected clock level %d",

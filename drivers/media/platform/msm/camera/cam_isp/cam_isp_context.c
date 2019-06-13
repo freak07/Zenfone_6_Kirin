@@ -1025,6 +1025,7 @@ static int __cam_isp_ctx_handle_error(struct cam_isp_context *ctx_isp,
 	struct cam_req_mgr_error_notify  notify;
 	uint64_t                         error_request_id;
 	struct cam_hw_fence_map_entry   *fence_map_out = NULL;
+	struct cam_req_mgr_message       req_msg;
 
 	struct cam_context *ctx = ctx_isp->base;
 	struct cam_isp_hw_error_event_data  *error_event_data =
@@ -1193,6 +1194,29 @@ end:
 			error_request_id, ctx_isp->frame_id);
 
 		ctx->ctx_crm_intf->notify_err(&notify);
+
+		/*
+		 * Need to send error occurred in KMD
+		 * This will help UMD to take necessary action
+		 * and to dump relevant info
+		 */
+
+		if (notify.error == CRM_KMD_ERR_OVERFLOW) {
+			req_msg.session_hdl = ctx_isp->base->session_hdl;
+			req_msg.u.err_msg.device_hdl = ctx_isp->base->dev_hdl;
+			req_msg.u.err_msg.error_type =
+				CAM_REQ_MGR_ERROR_TYPE_RECOVERY;
+			req_msg.u.err_msg.link_hdl = ctx_isp->base->link_hdl;
+			req_msg.u.err_msg.request_id = error_request_id;
+			req_msg.u.err_msg.resource_size = 0x0;
+
+			if (cam_req_mgr_notify_message(&req_msg,
+					V4L_EVENT_CAM_REQ_MGR_ERROR,
+					V4L_EVENT_CAM_REQ_MGR_EVENT))
+				CAM_ERR(CAM_ISP,
+					"Error in notifying the error time for req id:%lld",
+						ctx_isp->last_applied_req_id);
+		}
 		ctx_isp->substate_activated = CAM_ISP_CTX_ACTIVATED_HW_ERROR;
 	} else {
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "Can not notify ERRROR to CRM");
@@ -1507,7 +1531,9 @@ static int __cam_isp_ctx_flush_req_in_top_state(
 	struct cam_req_mgr_flush_request *flush_req)
 {
 	int rc = 0;
+	struct cam_isp_context *ctx_isp;
 
+	ctx_isp = (struct cam_isp_context *) ctx->ctx_priv;
 	if (flush_req->type == CAM_REQ_MGR_FLUSH_TYPE_ALL) {
 		CAM_INFO(CAM_ISP, "Last request id to flush is %lld",
 			flush_req->req_id);
@@ -1519,6 +1545,7 @@ static int __cam_isp_ctx_flush_req_in_top_state(
 	rc = __cam_isp_ctx_flush_req(ctx, &ctx->pending_req_list, flush_req);
 	spin_unlock_bh(&ctx->lock);
 
+	atomic_set(&ctx_isp->process_bubble, 0);
 	return rc;
 }
 
@@ -2731,9 +2758,12 @@ static int __cam_isp_ctx_start_dev_in_ready(struct cam_context *ctx,
 	start_isp.hw_config.init_packet = 1;
 	start_isp.start_only = false;
 
+	atomic_set(&ctx_isp->process_bubble, 0);
 	ctx_isp->frame_id = 0;
 	ctx_isp->active_req_cnt = 0;
 	ctx_isp->reported_req_id = 0;
+	atomic_set(&ctx_isp->process_bubble, 0);
+
 	ctx_isp->substate_activated = ctx_isp->rdi_only_context ?
 		CAM_ISP_CTX_ACTIVATED_APPLIED :
 		(req_isp->num_fence_map_out) ? CAM_ISP_CTX_ACTIVATED_EPOCH :

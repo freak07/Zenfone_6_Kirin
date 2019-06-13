@@ -43,6 +43,10 @@
 
 #define TICKS_IN_MICRO_SECOND    1000000
 
+int print_underflow_limit = 0;
+int print_interrupt_limit = 0;
+int print_overflow_limit = 0;
+
 /**
  * enum dsi_ctrl_driver_ops - controller driver ops
  */
@@ -2288,7 +2292,9 @@ static bool dsi_ctrl_check_for_spurious_error_interrupts(
 
 	if ((jiffies_now - dsi_ctrl->jiffies_start) < intr_check_interval) {
 		if (dsi_ctrl->error_interrupt_count > interrupt_threshold) {
-			pr_warn("Detected spurious interrupts on dsi ctrl\n");
+			if ((print_interrupt_limit%100)==0)
+				pr_warn("Detected spurious interrupts on dsi ctrl\n");
+			print_interrupt_limit++;
 			return true;
 		}
 	} else {
@@ -2345,7 +2351,9 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 						cb_info.event_idx,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
-			pr_err("dsi FIFO OVERFLOW error: 0x%lx\n", error);
+			if ((print_overflow_limit%100)==0)
+				pr_err("dsi FIFO OVERFLOW error: 0x%lx\n", error);
+			print_overflow_limit++;
 		}
 	}
 
@@ -2358,7 +2366,9 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
 		}
-		pr_err("dsi FIFO UNDERFLOW error: 0x%lx\n", error);
+		if ((print_underflow_limit%100)==0)
+			pr_err("dsi FIFO UNDERFLOW error: 0x%lx\n", error);
+		print_underflow_limit++;
 	}
 
 	/* DSI PLL UNLOCK error */

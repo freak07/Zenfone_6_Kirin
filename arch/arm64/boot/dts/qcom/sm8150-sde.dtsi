@@ -581,6 +581,7 @@
 	sde_dp: qcom,dp_display@0{
 		cell-index = <0>;
 		compatible = "qcom,dp-display";
+		status = "disabled";
 
 		vdda-1p2-supply = <&pm8150l_l3>;
 		vdda-0p9-supply = <&pm8150_l5>;
@@ -644,6 +645,8 @@
 		qcom,mst-enable;
 		qcom,dsc-feature-enable;
 		qcom,fec-feature-enable;
+		qcom,max-dp-dsc-blks = <2>;
+		qcom,max-dp-dsc-input-width-pixs = <2048>;
 
 		qcom,ctrl-supply-entries {
 			#address-cells = <1>;

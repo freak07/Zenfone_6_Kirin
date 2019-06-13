@@ -193,7 +193,10 @@ clean:
 	return rc;
 }
 EXPORT_SYMBOL(read_range_data_from_node);
-
+extern enum DEVICE_HWID g_ASUS_hwID;
+#define BATT_TYPE_ARA "3282423_asus_c11p1708_3150mah_averaged_masterslave_jul10th2018"
+#define QCOM3600 "alium_860_89032_0000_3600mah_sept24th2018"
+#define BATT_TYPE_KIRIN  "3742266_asus_c11p1806_4850mah_averaged_masterslave_dec13th2018"
 static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 {
 	struct device_node *batt_node, *profile_node;
@@ -227,8 +230,13 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 	if (batt_id_ohms < 0)
 		return -EBUSY;
 
-	profile_node = of_batterydata_get_best_profile(batt_node,
-					batt_id_ohms / 1000, NULL);
+	//profile_node = of_batterydata_get_best_profile(batt_node,
+	//				batt_id_ohms / 1000, NULL);
+
+			profile_node = of_batterydata_get_best_profile(batt_node,
+							batt_id_ohms  / 1000, BATT_TYPE_KIRIN);
+			pr_err("[BAT] LOAD KIRIN BATTERY PROFILE in get_step_chg_jeita_setting_from_profile");
+
 	if (IS_ERR(profile_node))
 		return PTR_ERR(profile_node);
 

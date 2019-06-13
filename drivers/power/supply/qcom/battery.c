@@ -131,6 +131,9 @@ enum {
 	FCC_STEPPING_IN_PROGRESS,
 };
 
+static bool asus_voter_debug = false;
+module_param_named(asus_voter_debug, asus_voter_debug, bool, 0600);
+
 /*******
  * ICL *
  ********/
@@ -601,6 +604,25 @@ static void pl_taper_work(struct work_struct *work)
 			goto done;
 		}
 
+		/*
+		 * Due to reduction of float voltage in JEITA condition taper
+		 * charging can be initiated at a lower FV. On removal of JEITA
+		 * condition, FV readjusts itself. However, once taper charging
+		 * is initiated, it doesn't exits until parallel chaging is
+		 * disabled due to which FCC doesn't scale back to its original
+		 * value, leading to slow charging thereafter.
+		 * Check if FV increases in comparison to FV at which taper
+		 * charging was initiated, and if yes, exit taper charging.
+		 */
+		if (get_effective_result(chip->fv_votable) >
+						chip->taper_entry_fv) {
+			pl_dbg(chip, PR_PARALLEL, "Float voltage increased. Exiting taper\n");
+			goto done;
+		} else {
+			chip->taper_entry_fv =
+					get_effective_result(chip->fv_votable);
+		}
+
 		rc = power_supply_get_property(chip->batt_psy,
 				       POWER_SUPPLY_PROP_CHARGE_TYPE, &pval);
 		if (rc < 0) {
@@ -626,26 +648,9 @@ static void pl_taper_work(struct work_struct *work)
 			vote(chip->fcc_votable, TAPER_STEPPER_VOTER,
 					true, eff_fcc_ua);
 		} else {
-			/*
-			 * Due to reduction of float voltage in JEITA condition
-			 * taper charging can be initiated at a lower FV. On
-			 * removal of JEITA condition, FV readjusts itself.
-			 * However, once taper charging is initiated, it doesn't
-			 * exits until parallel chaging is disabled due to which
-			 * FCC doesn't scale back to its original value, leading
-			 * to slow charging thereafter.
-			 * Check if FV increases in comparison to FV at which
-			 * taper charging was initiated, and if yes, exit taper
-			 * charging.
-			 */
-			if (get_effective_result(chip->fv_votable) >
-						chip->taper_entry_fv) {
-				pl_dbg(chip, PR_PARALLEL, "Float voltage increased. Exiting taper\n");
-				goto done;
-			} else {
-				pl_dbg(chip, PR_PARALLEL, "master is fast charging; waiting for next taper\n");
-			}
+			pl_dbg(chip, PR_PARALLEL, "master is fast charging; waiting for next taper\n");
 		}
+
 		/* wait for the charger state to deglitch after FCC change */
 		msleep(PL_TAPER_WORK_DELAY_MS);
 	}
@@ -660,6 +665,9 @@ static int pl_fcc_vote_callback(struct votable *votable, void *data,
 {
 	struct pl_data *chip = data;
 	int master_fcc_ua = total_fcc_ua, slave_fcc_ua = 0;
+
+	if (chip->fcc_votable && asus_voter_debug)
+		asus_dump_voter(chip->fcc_votable);
 
 	if (total_fcc_ua < 0)
 		return 0;
@@ -684,6 +692,9 @@ static int pl_fcc_vote_callback(struct votable *votable, void *data,
 	}
 
 	rerun_election(chip->pl_disable_votable);
+
+	printk("[BAT][CHG] pl_fcc_vote_callback: total_fcc(%d), master_fcc(%d), slave_fcc(%d)\n",
+		total_fcc_ua, master_fcc_ua, slave_fcc_ua);
 
 	return 0;
 }
@@ -889,6 +900,9 @@ static int pl_fv_vote_callback(struct votable *votable, void *data,
 	union power_supply_propval pval = {0, };
 	int rc = 0;
 
+	if (chip->fv_votable && asus_voter_debug)
+		asus_dump_voter(chip->fv_votable);
+
 	if (fv_uv < 0)
 		return 0;
 
@@ -949,9 +963,13 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 	 *	unvote USBIN_I_VOTER) the status_changed_work enables
 	 *	USBIN_I_VOTER based on settled current.
 	 */
-	if (icl_ua <= 1400000)
+	if (icl_ua <= 1400000) {
+		printk("[BAT][CHG] usb_icl_vote_callback: icl_ua(%d) <= 1400000, disable parallel charger\n", icl_ua);
+		if (chip->usb_icl_votable)
+			asus_dump_voter(chip->usb_icl_votable);
+
 		vote(chip->pl_enable_votable_indirect, USBIN_I_VOTER, false, 0);
-	else
+	} else
 		schedule_delayed_work(&chip->status_change_work,
 						msecs_to_jiffies(PL_DELAY_MS));
 
@@ -1033,6 +1051,7 @@ static bool is_batt_available(struct pl_data *chip)
 	return true;
 }
 
+extern bool get_asus_chg_ws_disable(void);
 static int pl_disable_vote_callback(struct votable *votable,
 		void *data, int pl_disable, const char *client)
 {
@@ -1084,7 +1103,8 @@ static int pl_disable_vote_callback(struct votable *votable,
 	if (chip->pl_mode != POWER_SUPPLY_PL_NONE && !pl_disable) {
 		/* keep system awake to talk to slave charger through i2c */
 		cancel_delayed_work_sync(&chip->pl_awake_work);
-		vote(chip->pl_awake_votable, PL_VOTER, true, 0);
+		if (!get_asus_chg_ws_disable())
+			vote(chip->pl_awake_votable, PL_VOTER, true, 0);
 
 		rc = validate_parallel_icl(chip, &disable);
 		if (rc < 0)
@@ -1207,8 +1227,8 @@ static int pl_disable_vote_callback(struct votable *votable,
 				&& !chip->taper_work_running) {
 				pl_dbg(chip, PR_PARALLEL,
 					"pl enabled in Taper scheduing work\n");
-				vote(chip->pl_awake_votable, TAPER_END_VOTER,
-						true, 0);
+				if (!get_asus_chg_ws_disable())
+					vote(chip->pl_awake_votable, TAPER_END_VOTER, true, 0);
 				queue_work(system_long_wq,
 						&chip->pl_taper_work);
 			}
@@ -1305,6 +1325,11 @@ static int pl_awake_vote_callback(struct votable *votable,
 		__pm_relax(chip->pl_ws);
 
 	pr_debug("client: %s awake: %d\n", client, awake);
+	if (!get_asus_chg_ws_disable())
+	{
+		if (chip->pl_awake_votable)
+			asus_dump_voter(chip->pl_awake_votable);
+	}
 	return 0;
 }
 
@@ -1399,7 +1424,8 @@ static void handle_main_charge_type(struct pl_data *chip)
 		chip->charge_type = pval.intval;
 		if (!chip->taper_work_running) {
 			pl_dbg(chip, PR_PARALLEL, "taper entry scheduling work\n");
-			vote(chip->pl_awake_votable, TAPER_END_VOTER, true, 0);
+			if (!get_asus_chg_ws_disable())
+				vote(chip->pl_awake_votable, TAPER_END_VOTER, true, 0);
 			queue_work(system_long_wq, &chip->pl_taper_work);
 		}
 		return;

@@ -14,6 +14,9 @@
 #include "cam_cci_core.h"
 #include "cam_cci_dev.h"
 
+#define WRITE_ONLY_USE_QUEUE_0
+#define CFG_USE_MUTEX
+
 static int32_t cam_cci_convert_type_to_num_bytes(
 	enum camera_sensor_i2c_type type)
 {
@@ -252,7 +255,10 @@ static uint32_t cam_cci_wait(struct cci_device *cci_dev,
 #ifdef DUMP_CCI_REGISTERS
 		cam_cci_dump_registers(cci_dev, master, queue);
 #endif
-		CAM_ERR(CAM_CCI, "wait for queue: %d", queue);
+		CAM_ERR(CAM_CCI, "wait for queue: %d, master: %d", queue, master);
+		CAM_ERR(CAM_CCI, "rw_cnt=(%d,%d,%d,%d),(%d,%d,%d,%d)",
+			cci_dev->rw_cnt[0],cci_dev->rw_cnt[1],cci_dev->rw_cnt[2],cci_dev->rw_cnt[3],
+			cci_dev->rw_cnt[4],cci_dev->rw_cnt[5],cci_dev->rw_cnt[6],cci_dev->rw_cnt[7]);
 		if (rc == 0)
 			rc = -ETIMEDOUT;
 		cam_cci_flush_queue(cci_dev, master);
@@ -1132,6 +1138,8 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 	soc_info = &cci_dev->soc_info;
 	base = soc_info->reg_map[0].mem_base;
 
+	cci_dev->rw_cnt[master*4+queue*2]++;
+
 	mutex_lock(&cci_dev->cci_master_info[master].mutex_q[queue]);
 
 	/*
@@ -1315,6 +1323,8 @@ static int32_t cam_cci_i2c_write(struct v4l2_subdev *sd,
 		CAM_ERR(CAM_CCI, "cam_cci_set_clk_param failed rc = %d", rc);
 		return rc;
 	}
+	cci_dev->rw_cnt[master*4+queue*2+1]++;
+
 	/*
 	 * Call validate queue to make sure queue is empty before starting.
 	 * If this call fails, don't proceed with i2c_write call. This is to
@@ -1480,13 +1490,13 @@ static int32_t cam_cci_read_bytes(struct v4l2_subdev *sd,
 			read_cfg->num_byte = read_bytes;
 
 		if (read_cfg->num_byte >= CCI_READ_MAX) {
-			cci_dev->is_burst_read = true;
+			cci_dev->is_burst_read[master] = true;
 			rc = cam_cci_burst_read(sd, c_ctrl);
 		} else {
-			cci_dev->is_burst_read = false;
+			cci_dev->is_burst_read[master] = false;
 			rc = cam_cci_read(sd, c_ctrl);
 		}
-		if (rc) {
+		if (rc < 0) {
 			CAM_ERR(CAM_CCI, "failed to read rc:%d", rc);
 			goto ERROR;
 		}
@@ -1502,7 +1512,7 @@ static int32_t cam_cci_read_bytes(struct v4l2_subdev *sd,
 	} while (read_bytes);
 
 ERROR:
-	cci_dev->is_burst_read = false;
+	cci_dev->is_burst_read[master] = false;
 	return rc;
 }
 
@@ -1548,8 +1558,9 @@ static int32_t cam_cci_write(struct v4l2_subdev *sd,
 	struct cci_device *cci_dev;
 	enum cci_i2c_master_t master;
 	struct cam_cci_master_info *cci_master_info;
+#ifndef WRITE_ONLY_USE_QUEUE_0
 	uint32_t i;
-
+#endif
 	cci_dev = v4l2_get_subdevdata(sd);
 	if (!cci_dev || !c_ctrl) {
 		CAM_ERR(CAM_CCI, "failed: invalid params %pK %pK",
@@ -1582,6 +1593,7 @@ static int32_t cam_cci_write(struct v4l2_subdev *sd,
 	case MSM_CCI_I2C_WRITE:
 	case MSM_CCI_I2C_WRITE_SEQ:
 	case MSM_CCI_I2C_WRITE_BURST:
+#ifndef WRITE_ONLY_USE_QUEUE_0
 		for (i = 0; i < NUM_QUEUES; i++) {
 			if (mutex_trylock(&cci_master_info->mutex_q[i])) {
 				rc = cam_cci_i2c_write(sd, c_ctrl, i,
@@ -1590,6 +1602,7 @@ static int32_t cam_cci_write(struct v4l2_subdev *sd,
 				return rc;
 			}
 		}
+#endif
 		mutex_lock(&cci_master_info->mutex_q[PRIORITY_QUEUE]);
 		rc = cam_cci_i2c_write(sd, c_ctrl,
 			PRIORITY_QUEUE, MSM_SYNC_DISABLE);
@@ -1611,16 +1624,53 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 {
 	int32_t rc = 0;
 
+#ifdef CFG_USE_MUTEX
+	struct cci_device *cci_dev;
+	enum cci_i2c_master_t master = MASTER_1;
+	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev || !cci_ctrl || !cci_ctrl->cci_info) {
+		pr_err("%s:%d failed: invalid params %pK %pK\n", __func__,
+			__LINE__, cci_dev, cci_ctrl);
+		rc = -EINVAL;
+		return rc;
+	}
+	master = cci_ctrl->cci_info->cci_i2c_master;
+	if (master < MASTER_MAX && master >= 0)
+		master= MASTER_1;
+#endif
+
 	CAM_DBG(CAM_CCI, "cmd %d", cci_ctrl->cmd);
 	switch (cci_ctrl->cmd) {
 	case MSM_CCI_INIT:
+#ifdef CFG_USE_MUTEX
+		mutex_lock(&cci_dev->mutex_for_conf[MASTER_1]);
+		mutex_lock(&cci_dev->mutex_for_conf[MASTER_0]);
+#endif
 		rc = cam_cci_init(sd, cci_ctrl);
+#ifdef CFG_USE_MUTEX
+		mutex_unlock(&cci_dev->mutex_for_conf[MASTER_0]);
+		mutex_unlock(&cci_dev->mutex_for_conf[MASTER_1]);
+#endif
 		break;
 	case MSM_CCI_RELEASE:
+#ifdef CFG_USE_MUTEX
+		mutex_lock(&cci_dev->mutex_for_conf[MASTER_1]);
+		mutex_lock(&cci_dev->mutex_for_conf[MASTER_0]);
+#endif
 		rc = cam_cci_release(sd);
+#ifdef CFG_USE_MUTEX
+		mutex_unlock(&cci_dev->mutex_for_conf[MASTER_0]);
+		mutex_unlock(&cci_dev->mutex_for_conf[MASTER_1]);
+#endif
 		break;
 	case MSM_CCI_I2C_READ:
+#ifdef CFG_USE_MUTEX
+		mutex_lock(&cci_dev->mutex_for_conf[master]);
+#endif
 		rc = cam_cci_read_bytes(sd, cci_ctrl);
+#ifdef CFG_USE_MUTEX
+		mutex_unlock(&cci_dev->mutex_for_conf[master]);
+#endif
 		break;
 	case MSM_CCI_I2C_WRITE:
 	case MSM_CCI_I2C_WRITE_SEQ:
@@ -1628,7 +1678,13 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 	case MSM_CCI_I2C_WRITE_SYNC:
 	case MSM_CCI_I2C_WRITE_ASYNC:
 	case MSM_CCI_I2C_WRITE_SYNC_BLOCK:
+#ifdef CFG_USE_MUTEX
+		mutex_lock(&cci_dev->mutex_for_conf[master]);
+#endif
 		rc = cam_cci_write(sd, cci_ctrl);
+#ifdef CFG_USE_MUTEX
+		mutex_unlock(&cci_dev->mutex_for_conf[master]);
+#endif
 		break;
 	case MSM_CCI_GPIO_WRITE:
 		break;

@@ -74,7 +74,7 @@ struct cam_actuator_soc_private {
 	struct cam_actuator_i2c_info_t i2c_info;
 	struct cam_sensor_power_ctrl_t power_info;
 };
-
+// ASUS_BSP +++
 /**
  * struct intf_params
  * @device_hdl: Device Handle
@@ -82,14 +82,14 @@ struct cam_actuator_soc_private {
  * @ops: KMD operations
  * @crm_cb: Callback API pointers
  */
-struct intf_params {
+struct cam_actuator_intf_params {
 	int32_t device_hdl;
 	int32_t session_hdl;
 	int32_t link_hdl;
 	struct cam_req_mgr_kmd_ops ops;
 	struct cam_req_mgr_crm_cb *crm_cb;
 };
-
+//ASUS_BSP ---
 /**
  * struct cam_actuator_ctrl_t
  * @i2c_driver: I2C device info
@@ -124,7 +124,7 @@ struct cam_actuator_ctrl_t {
 	struct cam_subdev v4l2_dev_str;
 	struct i2c_data_settings i2c_data;
 	struct cam_actuator_query_cap act_info;
-	struct intf_params bridge_intf;
+	struct cam_actuator_intf_params bridge_intf;
 	char device_name[20];
 	uint32_t last_flush_req;
 };
