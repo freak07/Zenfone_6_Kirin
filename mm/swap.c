@@ -986,6 +986,15 @@ unsigned pagevec_lookup_range(struct pagevec *pvec,
 }
 EXPORT_SYMBOL(pagevec_lookup_range);
 
+unsigned pagevec_lookup_tag_tag(struct pagevec *pvec, struct address_space *mapping,
+		pgoff_t *index, int tag, unsigned nr_pages)
+		{
+	pvec->nr = find_get_pages_tag(mapping, index, tag,
+									nr_pages, pvec->pages);
+	return pagevec_count(pvec);
+}
+EXPORT_SYMBOL(pagevec_lookup_tag);
+
 unsigned pagevec_lookup_range_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		int tag)
