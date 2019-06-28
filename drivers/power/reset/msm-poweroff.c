@@ -371,6 +371,9 @@ static void msm_restart_prepare(const char *cmd)
 
 	if (force_warm_reboot)
 		pr_info("Forcing a warm reset of the system\n");
+		
+	/* keep console-ramoops alive */
+	need_warm_reset = true;
 
 #ifdef FORCE_WD_RESET_FEATURE
 	if (cmd != NULL && (!strcmp(cmd, "watchdogreset"))) {
