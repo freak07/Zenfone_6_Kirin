@@ -145,7 +145,7 @@ struct ufs_dev_fix {
  * from the HIBERN8 state. Enable this quirk to give UFS devices 50us delay
  * instead of the default delay.
  */
-#define UFS_DEVICE_QUIRK_WAIT_AFTER_REF_CLK_UNGATE	(1 << 10)
+#define UFS_DEVICE_QUIRK_WAIT_AFTER_REF_CLK_UNGATE	(1 << 11)
 
 /*
  * Some UFS devices need more delay after device reference clk is turned on
