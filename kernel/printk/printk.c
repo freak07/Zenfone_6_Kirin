@@ -60,6 +60,9 @@
 #include "internal.h"
 #include <linux/rtc.h>
 
+#include <linux/irq.h>
+#include <linux/wakeup_reason.h>
+
 extern struct timezone sys_tz;
 //ASUS_BSP +++ [PM]Extern values for GPIO, IRQ, SPMI wakeup information for printk.c to Evtlog
 extern int gic_irq_cnt, gic_resume_irq[8];
@@ -2257,7 +2260,16 @@ void resume_console(void)
 	if (pm_pwrcs_ret) {
 		if (gic_irq_cnt > 0) {
 			for (i = 0; i < gic_irq_cnt; i++) {
-				ASUSEvtlog("[PM] IRQs triggered: %d\n", gic_resume_irq[i]);
+				unsigned int irq = gic_resume_irq[i];
+				struct irq_desc *desc = irq_to_desc(irq);
+				const char *name = "null";
+
+				if (desc == NULL)
+					name = "stray irq";
+				else if (desc->action && desc->action->name)
+					name = desc->action->name;
+				log_wakeup_reason(irq);
+				ASUSEvtlog("[PM] IRQs triggered: %d %s\n", gic_resume_irq[i], name);
 			}
 			gic_irq_cnt = 0;  //clear log count
 		}

@@ -105,6 +105,9 @@
 #define WLED_SINK_BRIGHT_LSB_REG(n)	(0x57 + (n * 0x10))
 #define WLED_SINK_BRIGHT_MSB_REG(n)	(0x58 + (n * 0x10))
 
+#define WLED_SINK_HYBRID_DIMMING_TRESH		0x4B
+#define  WLED_SINK_HYBRID_DIM_THR_MASK		GENMASK(2, 0)
+
 /* WLED5 specific control registers */
 #define WLED5_CTRL_STATUS		0x07
 
@@ -187,6 +190,7 @@
 
 extern bool is_kirin_panel;
 int hbm_mode = 1;
+int hyb_thre = 0x02;  //0(0.78 %), 1(1.56 %), 2(3.13 %), 3(6.25%), 4(12.5 %), 5(25 %), 6(50 %), 7(100%)
 struct wled *g_wled;
 
 enum wled_version {
@@ -2294,6 +2298,43 @@ static const struct backlight_ops wled_ops = {
 	.get_brightness = wled_get_brightness,
 };
 
+static int wled5_set_hybrid_thres(struct wled *wled, int thres)
+{
+	int rc = 0;
+	u16 addr;
+	//u8 sink_en = 0;
+
+	if (!wled) {
+		printk("[Display] broken wled structure.\n");
+		return -1;
+	}
+
+	printk("[Display] WLED hybrid threshold is set to %d\n", thres);
+
+	addr = wled->sink_addr + WLED_SINK_HYBRID_DIMMING_TRESH;
+	rc = regmap_update_bits(wled->regmap, addr, WLED_SINK_HYBRID_DIM_THR_MASK, thres);
+	if (rc < 0) {
+		printk("[Display] update WLED5_SINK_FS_CURR_REG failed: %d\n", rc);
+		return rc;
+	}
+
+	/*rc = regmap_update_bits(wled->regmap,
+			wled->sink_addr + WLED_SINK_CURR_SINK_EN,
+			WLED_SINK_CURR_SINK_MASK, sink_en);
+	if (rc < 0) {
+		printk("[Display] update WLED_SINK_CURR_SINK_EN failed: %d\n", rc);
+		return rc;
+	}*/
+
+	rc = wled_sync_toggle(wled);
+	if (rc < 0) {
+		printk("[Display] update wled_sync_toggle failed: %d\n", rc);
+		return rc;
+	}
+
+	return rc;
+}
+
 static int wled5_set_fsc(struct wled *wled, int level)
 {
 	int rc = 0, i, temp;
@@ -2370,6 +2411,20 @@ static ssize_t asus_wled_fsc_proc_write(struct file *filp, const char *buff, siz
 		level = 12;
 	else if(strncmp(messages, "13", 2) == 0)
 		level = 13;
+	else if(strncmp(messages, "7", 1) == 0)
+		level = 7;
+	else if(strncmp(messages, "6", 1) == 0)
+		level = 6;
+	else if(strncmp(messages, "5", 1) == 0)
+		level = 5;
+	else if(strncmp(messages, "4", 1) == 0)
+		level = 4;
+	else if(strncmp(messages, "3", 1) == 0)
+		level = 3;
+	else if(strncmp(messages, "2", 1) == 0)
+		level = 2;
+	else if(strncmp(messages, "1", 1) == 0)
+		level = 1;
 
 	ret = wled5_set_fsc(g_wled, level);
 
@@ -2386,11 +2441,63 @@ static struct file_operations asus_wled_fsc_proc_ops = {
 	.write = asus_wled_fsc_proc_write,
 };
 
+static ssize_t asus_wled_hyb_proc_write(struct file *filp, const char *buff, size_t len, loff_t *off)
+{
+	char messages[256];
+	int level = 3;
+	int ret = 0;
+
+	memset(messages, 0, sizeof(messages));
+
+	if (len > 256)
+		len = 256;
+
+	if (copy_from_user(messages, buff, len))
+		return -EFAULT;
+
+	else if(strncmp(messages, "7", 1) == 0)
+		level = 7;
+	else if(strncmp(messages, "6", 1) == 0)
+		level = 6;
+	else if(strncmp(messages, "5", 1) == 0)
+		level = 5;
+	else if(strncmp(messages, "4", 1) == 0)
+		level = 4;
+	else if(strncmp(messages, "3", 1) == 0)
+		level = 3;
+	else if(strncmp(messages, "2", 1) == 0)
+		level = 2;
+	else if(strncmp(messages, "1", 1) == 0)
+		level = 1;
+	else if(strncmp(messages, "0", 1) == 0)
+		level = 0;
+
+	ret = wled5_set_hybrid_thres(g_wled, level);
+
+	if (ret) {
+		printk("[Display] Setting WLED hybrid threshold failed: %d\n", ret);
+	} else {
+		printk("[Display] write WLED hybrid threshold: %d\n", level);
+	}
+
+	return len;
+}
+
+static struct file_operations asus_wled_hyb_proc_ops = {
+	.write = asus_wled_hyb_proc_write,
+};
+
 void asus_wled_fsc_validate(void)
 {
 	int ret = 0;
 	if (g_wled) {
 		printk("[Display] asus_wled_fsc_validate to set correct wled fs-current\n");
+
+		ret = wled5_set_hybrid_thres(g_wled, hyb_thre);
+		if (ret) {
+			printk("[Display] Setting WLED hybrid threshold failed: %d\n", ret);
+		}
+
 		ret = wled5_set_fsc(g_wled, (hbm_mode ? 9 : 8));
 		if (ret) {
 			printk("[Display] Setting WLED fs-current failed: %d\n", ret);
@@ -2563,6 +2670,7 @@ static int wled_probe(struct platform_device *pdev)
 
 	// ASUS bsp for dynamic control wled fs-current
 	proc_create("driver/wled_fs_curr", 0777, NULL, &asus_wled_fsc_proc_ops);
+	proc_create("driver/wled_hyb_thres", 0777, NULL, &asus_wled_hyb_proc_ops);
 	proc_create("hbm_mode", 0444, NULL, &asus_wled_hbm_proc_ops);
 	proc_create("hbm_mode_override", 0666, NULL, &asus_wled_hbm_override_proc_ops);
 	g_wled = wled;

@@ -97,6 +97,8 @@ enum cam_cci_cmd_type {
 	MSM_CCI_GPIO_WRITE,
 	MSM_CCI_I2C_WRITE_SYNC,
 	MSM_CCI_I2C_WRITE_SYNC_BLOCK,
+	MSM_CCI_I2C_MUTEX_LOCK,
+	MSM_CCI_I2C_MUTEX_UNLOCK,
 };
 
 enum cci_i2c_queue_t {

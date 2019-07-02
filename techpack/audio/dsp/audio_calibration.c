@@ -43,6 +43,13 @@ static int rcvdev = -1;
 bool fts_set_pmode(bool pmode);
 /* ASUS_BSP --- Audio mode and device */
 
+/* ASUS_BSP +++ Add uevent to IMS for Line audio_mode = 0 when Line VoIP incall */
+static int active_outputpid = 0;
+static struct kset *rcv_notification_uevent_kset;
+static struct kobject *rcv_notification_kobj;
+static void send_rcv_notification_uevent(int rcvdev);
+/* ASUS_BSP --- Add uevent to IMS for Line audio_mode = 0 when Line VoIP incall */
+
 struct audio_cal_client_info {
 	struct list_head		list;
 	struct audio_cal_callbacks	*callbacks;
@@ -443,6 +450,62 @@ static void check_audio_and_set_pmode(void)
 	}
 }
 
+/* ASUS_BSP +++ Add uevent to IMS for Line audio_mode = 0 when Line VoIP incall */
+static void send_rcv_notification_uevent(int rcvdev)
+{
+        if (rcv_notification_kobj) {
+		char uevent_buf[512];
+		char *envp[] = { uevent_buf, NULL };
+		if (rcvdev == 1) {
+			snprintf(uevent_buf, sizeof(uevent_buf), "PHONE_RECEIVER_NOTIFICATION=%d", active_outputpid);
+			printk("PHONE_RECEIVER_NOTIFICATION=%d, RCV\n", active_outputpid);
+		} else {
+			snprintf(uevent_buf, sizeof(uevent_buf), "PHONE_RECEIVER_NOTIFICATION=0");
+			printk("PHONE_RECEIVER_NOTIFICATION=0, not RCV\n");
+		}
+		kobject_uevent_env(rcv_notification_kobj, KOBJ_CHANGE, envp);
+	}
+}
+
+static void rcv_notification_uevent_release(struct kobject *kobj)
+{
+	kfree(kobj);
+}
+
+static struct kobj_type rcv_notification_uevent_ktype = {
+	.release = rcv_notification_uevent_release,
+};
+
+static int rcv_notification_uevent_init(void)
+{
+	int ret;
+
+	rcv_notification_uevent_kset = kset_create_and_add("rcv_notification_uevent", NULL, kernel_kobj);
+	if (!rcv_notification_uevent_kset) {
+		pr_err("%s: failed to create rcv_notification_uevent_kset", __func__);
+		return -ENOMEM;
+	}
+	rcv_notification_kobj = kzalloc(sizeof(*rcv_notification_kobj), GFP_KERNEL);
+	if (!rcv_notification_kobj) {
+		pr_err("%s: failed to create rcv_notification_kobj", __func__);
+		return -ENOMEM;
+	}
+
+	rcv_notification_kobj->kset = rcv_notification_uevent_kset;
+
+	ret = kobject_init_and_add(rcv_notification_kobj, &rcv_notification_uevent_ktype, NULL, "audio_rcv_notification");
+	if (ret) {
+		pr_err("%s: failed to init rcv_notification_kobj", __func__);
+		kobject_put(rcv_notification_kobj);
+		return -EINVAL;
+	}
+
+	kobject_uevent(rcv_notification_kobj, KOBJ_ADD);
+
+	return 0;
+}
+/* ASUS_BSP --- Add uevent to IMS for Line audio_mode = 0 when Line VoIP incall */
+
 static long audio_cal_shared_ioctl(struct file *file, unsigned int cmd,
 							void __user *arg)
 {
@@ -497,6 +560,21 @@ static long audio_cal_shared_ioctl(struct file *file, unsigned int cmd,
 		goto done;
 	/* ASUS_BSP --- */
 
+	/* ASUS_BSP +++ Add uevent for receiver checking */
+        case AUDIO_SET_ACTIVEOUTPUT_PID:
+		mutex_lock(&audio_cal.cal_mutex[AUDIO_SET_ACTIVEOUTPUT_PID_TYPE]);
+		if (copy_from_user(&active_outputpid, (void *)arg, sizeof(active_outputpid))) {
+                        pr_err("%s: Could not copy state from user\n", __func__);
+                        ret = -EFAULT;
+                }
+                printk("active_outputpid=%d\n", active_outputpid);
+		if (active_outputpid == 0) {
+			send_rcv_notification_uevent(0);	/* previous outputpid's track was removed */
+		}
+                mutex_unlock(&audio_cal.cal_mutex[AUDIO_SET_ACTIVEOUTPUT_PID_TYPE]);
+                goto done;
+        /* ASUS_BSP --- */
+
 	/* ASUS_BSP +++ Audio mode */
 	case AUDIO_SET_MODE:
 		mutex_lock(&audio_cal.cal_mutex[SET_MODE_TYPE]);
@@ -521,7 +599,8 @@ static long audio_cal_shared_ioctl(struct file *file, unsigned int cmd,
 		}
 
 		rcv_device = rcvdev;
-		check_audio_and_set_pmode();
+		/* check_audio_and_set_pmode(); */
+		send_rcv_notification_uevent(rcv_device);
 		printk("%s: Audio device status:rcv_device=%d\n", __func__, rcv_device);
 		mutex_unlock(&audio_cal.cal_mutex[SET_RCV_DEVICE_TYPE]);
 		goto done;
@@ -687,6 +766,8 @@ static long audio_cal_ioctl(struct file *f,
 							225, compat_uptr_t)
 #define AUDIO_SET_RCV_DEVICE32		_IOWR(CAL_IOCTL_MAGIC, \
 							233, compat_uptr_t)
+#define AUDIO_SET_ACTIVEOUTPUT_PID32 _IOWR(CAL_IOCTL_MAGIC, \
+                                                        234,compat_uptr_t)
 /* ASUS_BSP --- Audio mode and device */
 
 static long audio_cal_compat_ioctl(struct file *f,
@@ -732,6 +813,9 @@ static long audio_cal_compat_ioctl(struct file *f,
 		break;
 	case AUDIO_SET_RCV_DEVICE32:
 		cmd64 = AUDIO_SET_RCV_DEVICE;
+		break;
+	case AUDIO_SET_ACTIVEOUTPUT_PID32:
+		cmd64 = AUDIO_SET_ACTIVEOUTPUT_PID;
 		break;
 /* ASUS_BSP --- Audio mode and device */
 	default:
@@ -838,6 +922,10 @@ int __init audio_cal_init(void)
 /* ASUS_BSP +++ Add warning uevent for input occupied issue ( TT1290090 ) */
 	activeinputpid_uevent_init();
 /* ASUS_BSP --- */
+
+/* ASUS_BSP +++ Add uevent to IMS for Line audio_mode = 0 when Line VoIP incall */
+	rcv_notification_uevent_init();
+/* ASUS_BSP --- Add uevent to IMS for Line audio_mode = 0 when Line VoIP incall */
 
 	memset(&audio_cal, 0, sizeof(audio_cal));
 	mutex_init(&audio_cal.common_lock);

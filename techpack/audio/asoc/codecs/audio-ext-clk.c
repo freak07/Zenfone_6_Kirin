@@ -66,9 +66,11 @@ static int audio_ext_clk_prepare(struct clk *clk)
 {
 	struct audio_ext_ap_clk *audio_clk = to_audio_ap_clk(clk);
 
-	pr_debug("%s: gpio: %d\n", __func__, audio_clk->gpio);
-	if (gpio_is_valid(audio_clk->gpio))
+	printk("%s: gpio: %d\n", __func__, audio_clk->gpio);
+	if (gpio_is_valid(audio_clk->gpio)) {
+		printk("audio-ext-clk: %s: gpio: %d is valid and pull high\n", __func__, audio_clk->gpio);
 		return gpio_direction_output(audio_clk->gpio, 1);
+	}
 	return 0;
 }
 
@@ -76,9 +78,11 @@ static void audio_ext_clk_unprepare(struct clk *clk)
 {
 	struct audio_ext_ap_clk *audio_clk = to_audio_ap_clk(clk);
 
-	pr_debug("%s: gpio: %d\n", __func__, audio_clk->gpio);
-	if (gpio_is_valid(audio_clk->gpio))
+	printk("%s: gpio: %d\n", __func__, audio_clk->gpio);
+	if (gpio_is_valid(audio_clk->gpio)) {
+		printk("audio-ext-clk: %s: gpio: %d is valid and pull low\n", __func__, audio_clk->gpio);
 		gpio_direction_output(audio_clk->gpio, 0);
+	}
 }
 
 static inline struct audio_ext_ap_clk2 *to_audio_ap_clk2(struct clk *clk)

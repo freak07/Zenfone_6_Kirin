@@ -3365,6 +3365,7 @@ static ssize_t smartchg_stop_charging_show(struct device *dev, struct device_att
 	return sprintf(buf, "%d\n", smartchg_stop_flag);
 }
 
+int disable_inov_flag = 0;
 static ssize_t INOV_enable_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
@@ -3378,11 +3379,13 @@ static ssize_t INOV_enable_store(struct device *dev,
 		if (rc < 0)
 			CHG_DBG_E("Couldn't set MISC_THERMREG_SRC_CFG_REG 0x0\n");
 		CHG_DBG("Disable INOV function\n");
+		disable_inov_flag = 1;
 	} else if (tmp == 1) {
 		rc = smblib_masked_write(smbchg_dev, MISC_THERMREG_SRC_CFG_REG, THERMREG_INOV_ENABLE, 0x07);
 		if (rc < 0)
 			CHG_DBG_E("Couldn't set MISC_THERMREG_SRC_CFG_REG 0x7\n");
 		CHG_DBG("Enable INOV function\n");
+		disable_inov_flag = 0;
     }
 
 	return len;

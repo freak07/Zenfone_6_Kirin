@@ -56,8 +56,6 @@ struct msm_rpm_stats_data {
 	u64 last_entered_at;
 	u64 last_exited_at;
 	u64 accumulated;
-	u32 lock_mask;
-	u32 lock_status;
 #if defined(CONFIG_MSM_RPM_SMD)
 	u32 client_votes;
 	u32 reserved[3];
@@ -106,8 +104,6 @@ static inline int msm_rpmstats_append_data_to_buf(char *buf,
 	u64 time_in_last_mode;
 	u64 time_since_last_mode;
 	u64 actual_last_sleep;
-	u32 lock_mask;
-	u32 lock_status;
 
 	stat_type[4] = 0;
 	memcpy(stat_type, &data->stat_type, sizeof(u32));
@@ -117,8 +113,6 @@ static inline int msm_rpmstats_append_data_to_buf(char *buf,
 	time_since_last_mode = arch_counter_get_cntvct() - data->last_exited_at;
 	time_since_last_mode = get_time_in_sec(time_since_last_mode);
 	actual_last_sleep = get_time_in_msec(data->accumulated);
-	lock_mask = data->lock_mask & 0x3ff;
-	lock_status = data->lock_status & 0x3ff;
 
 #if defined(CONFIG_MSM_RPM_SMD)
 	return snprintf(buf, buflength,
@@ -131,10 +125,9 @@ static inline int msm_rpmstats_append_data_to_buf(char *buf,
 #else
 	return snprintf(buf, buflength,
 		"RPM Mode:%s\n\t count:%d\ntime in last mode(msec):%llu\n"
-		"time since last mode(sec):%llu\nactual last sleep(msec):%llu\n"
-		"lock mask:%x\nlock status:%x\n",
+		"time since last mode(sec):%llu\nactual last sleep(msec):%llu\n\n",
 		stat_type, data->count, time_in_last_mode,
-		time_since_last_mode, actual_last_sleep, lock_mask, lock_status);
+		time_since_last_mode, actual_last_sleep);
 #endif
 }
 
@@ -180,13 +173,6 @@ static inline int msm_rpmstats_copy_stats(
 		data.accumulated = msm_rpmstats_read_quad_register(reg,
 				i, offsetof(struct msm_rpm_stats_data,
 					accumulated));
-	        data.lock_mask = msm_rpmstats_read_long_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        lock_mask));
-
-		data.lock_status = msm_rpmstats_read_long_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        lock_status));
 #if defined(CONFIG_MSM_RPM_SMD)
 		data.client_votes = msm_rpmstats_read_long_register(reg,
 				i, offsetof(struct msm_rpm_stats_data,
@@ -346,27 +332,24 @@ static int rpm_stats_suspend(struct device *dev)
 		return 0;
 	}
 	/* Print aosd and cxsd */
-	for (i = 0; i <= 2; i++) {
-                data.stat_type = msm_rpmstats_read_long_register(reg, i,
-                                offsetof(struct msm_rpm_stats_data,
-                                        stat_type));
-                data.count = msm_rpmstats_read_long_register(reg, i,
-                                offsetof(struct msm_rpm_stats_data, count));
-		/*
-                data.last_entered_at = msm_rpmstats_read_quad_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        last_entered_at));
-                data.last_exited_at = msm_rpmstats_read_quad_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        last_exited_at));
-                data.accumulated = msm_rpmstats_read_quad_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        accumulated));
-		*/
+	for (i = 0; i < 2; i++) {
+		data.stat_type = msm_rpmstats_read_long_register(reg, i,
+				offsetof(struct msm_rpm_stats_data, stat_type));
+		data.count = msm_rpmstats_read_long_register(reg, i,
+				offsetof(struct msm_rpm_stats_data, count));
 		memcpy(stat_type, &data.stat_type, sizeof(u32));
 		printk("[RPM] Suspend: status: Mode: %s, Count: %d\n", stat_type, data.count);
-	
-        }
+	}
+	data.count = msm_rpmstats_read_long_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, count));
+	data.last_entered_at = msm_rpmstats_read_quad_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, last_entered_at));
+	data.last_exited_at = msm_rpmstats_read_quad_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, last_exited_at));
+	data.accumulated = msm_rpmstats_read_quad_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, accumulated));
+	printk("[RPM] Suspend: count:%d, mask:0x%llx, status(enter):0x%llx, status(exit):0x%llx\n",
+		data.count, data.accumulated, data.last_entered_at, data.last_exited_at);
 
 	iounmap(reg);
 	return 0;
@@ -374,58 +357,45 @@ static int rpm_stats_suspend(struct device *dev)
 
 static int rpm_stats_resume(struct device *dev)
 {
-        void __iomem *reg =0;
-        struct msm_rpm_stats_data data;
-        char stat_type[5];
-        int i,j;
+	void __iomem *reg =0;
+	struct msm_rpm_stats_data data;
+	char stat_type[5];
+	int i,j;
 	u32 aop_block_ss = 0;
-        stat_type[4] = 0;
+	stat_type[4] = 0;
 
-        reg = ioremap_nocache(g_phys_addr_base, g_phys_size);
-        if(!reg) {
-                return 0;
-        }
-        /* Print aosd and cxsd */
-        for (i = 0; i <= 2; i++) {
-                data.stat_type = msm_rpmstats_read_long_register(reg, i,
-                                offsetof(struct msm_rpm_stats_data,
-                                        stat_type));
-                data.count = msm_rpmstats_read_long_register(reg, i,
-                                offsetof(struct msm_rpm_stats_data, count));
-                /*
-                data.last_entered_at = msm_rpmstats_read_quad_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        last_entered_at));
-                data.last_exited_at = msm_rpmstats_read_quad_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        last_exited_at));
-                data.accumulated = msm_rpmstats_read_quad_register(reg,
-                                i, offsetof(struct msm_rpm_stats_data,
-                                        accumulated));
-                */
+	reg = ioremap_nocache(g_phys_addr_base, g_phys_size);
+	if(!reg) {
+		return 0;
+	}
+	/* Print aosd and cxsd */
+	for (i = 0; i < 2; i++) {
+		data.stat_type = msm_rpmstats_read_long_register(reg, i,
+				offsetof(struct msm_rpm_stats_data, stat_type));
+		data.count = msm_rpmstats_read_long_register(reg, i,
+				offsetof(struct msm_rpm_stats_data, count));
 		memcpy(stat_type, &data.stat_type, sizeof(u32));
 		printk("[RPM] Resume: status: Mode: %s, Count: %d\n", stat_type, data.count);
-		/* Because the mask and lock status will only be assigned during aop exiting cxsd state,
-		 * so only print them after cxsd count is not 0 */
-		if ( i == 1 && data.count> 0) {
-			data.lock_mask = msm_rpmstats_read_long_register(reg,
-        	                        i, offsetof(struct msm_rpm_stats_data,
-                	                        lock_mask));
-	                data.lock_status = msm_rpmstats_read_long_register(reg,
-        	                        i, offsetof(struct msm_rpm_stats_data,
-                	                        lock_status));
-			/* Only check the last 10-bit that both are 0 */
-			aop_block_ss = ((~(data.lock_mask & 0x3ff)) & (~(data.lock_status & 0x3ff))) & 0x3ff;
-			//printk("[RPM] Resume: aop_block_ss:%x\n",aop_block_ss);
-			for (j = 0; j < ARRAY_SIZE(subsystem_names); j++) {
-				if(aop_block_ss & (0x1 << j))
-					printk("[RPM]:blocking aosd susbsystem:%s\n",subsystem_names[j]);
-			}
-		}
-        }
+	}
+	data.count = msm_rpmstats_read_long_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, count));
+	data.last_entered_at = msm_rpmstats_read_quad_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, last_entered_at));
+	data.last_exited_at = msm_rpmstats_read_quad_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, last_exited_at));
+	data.accumulated = msm_rpmstats_read_quad_register(reg,
+		3, offsetof(struct msm_rpm_stats_data, accumulated));
+	printk("[RPM] Resume: count:%d, mask:0x%llx, status(enter):0x%llx, status(exit):0x%llx\n",
+		data.count, data.accumulated, data.last_entered_at, data.last_exited_at);
+	/* Only check the last 10-bit that both are 0 */
+	aop_block_ss = ((~(data.accumulated & 0x3ff)) & (~(data.last_entered_at & 0x3ff))) & 0x3ff;
+	for (j = 0; j < ARRAY_SIZE(subsystem_names); j++) {
+		if(aop_block_ss & (0x1 << j))
+			printk("[RPM] blocking aosd susbsystem:%s\n",subsystem_names[j]);
+	}
 
-        iounmap(reg);
-        return 0;
+	iounmap(reg);
+	return 0;
 }
 
 #endif

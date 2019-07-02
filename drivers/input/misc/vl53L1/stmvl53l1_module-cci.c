@@ -513,9 +513,18 @@ int stmvl53l1_power_up_cci(void *object)
 
 	/* turn on power */
 	if (tof_ctrl->power_supply) {
+		rc = camera_cci_lock(&tof_ctrl->io_master_info);
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "cci_lock failed: rc: %d", rc);
+
 		rc = cam_soc_util_regulator_enable(tof_ctrl->power_supply, "laser", 2800000, 3100000, 80000, 0);
 		//rc = cam_soc_util_regulator_enable(tof_ctrl->power_supply, "laser", 2856000, 2856000, 80000, 0);
 		rc |= regulator_enable(tof_ctrl->cci_supply);
+
+		rc = camera_cci_unlock(&tof_ctrl->io_master_info);
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "cci_unlock failed: rc: %d", rc);
+
 		if (rc) {
 			vl53l1_errmsg("fail to turn on regulator");
 			return rc;
@@ -554,9 +563,18 @@ int stmvl53l1_power_down_cci(void *cci_object)
 
 	/* turn off power */
 	if (tof_ctrl->power_supply) {
+		rc = camera_cci_lock(&tof_ctrl->io_master_info);
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "cci_lock failed: rc: %d", rc);
+
 		//rc = cam_soc_util_regulator_disable(tof_ctrl->power_supply, "laser", 2800000, 2800000, 80000, 0);
 		rc = cam_soc_util_regulator_disable(tof_ctrl->power_supply, "laser", 2800000, 3100000, 80000, 0);
 		rc = regulator_disable(tof_ctrl->cci_supply);
+
+		rc = camera_cci_unlock(&tof_ctrl->io_master_info);
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "cci_unlock failed: rc: %d", rc);
+
 		if (rc)
 			vl53l1_errmsg("reg disable failed. rc=%d\n",
 				rc);

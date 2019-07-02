@@ -1085,6 +1085,7 @@ static int cover_dit_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,uint32_t camera_i
 {
 	int num;
 	char* load_file_name;
+	int wrong_data = 0;
 
 #ifdef DIT_CHKCALI
 	if(g_module_changed[camera_id])
@@ -1112,8 +1113,39 @@ static int cover_dit_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,uint32_t camera_i
 
 	num = read_file_into_buffer(load_file_name,e_ctrl->cal_data.mapdata,8192);
 
+	//check data: AWB 0x02~0x07 can't be Null or 0
+	if (num >= 8) {
+		for(int i = 2; i < 8; i=i+2)
+		{
+			int32_t check_data = 0;
+			if (e_ctrl->cal_data.mapdata+i != NULL && e_ctrl->cal_data.mapdata+(i+1) != NULL)
+			{
+				check_data = (e_ctrl->cal_data.mapdata[i+1]<<8) + e_ctrl->cal_data.mapdata[i];
+				pr_info("[DIT_EEPROM]  (0x%04X 0x%04X)  data: 0x%04X ", i+1, i, check_data);
+
+				if (check_data == 0)
+				{
+					wrong_data = 1;
+					pr_info("[DIT_EEPROM]  %s wrong_data: address:(0x%04X 0x%04X) data:0x%02X\n",load_file_name , i+1, i, check_data);
+					break;
+				}
+			}
+			else
+			{
+				wrong_data = 1;
+				pr_info("[DIT_EEPROM] %s wrong_data:  address:0x%04X = NULL  OR  address:0x%04X = NULL \n", load_file_name, i+1, i);
+				break;
+			}
+		}
+	}
+	else
+	{
+		wrong_data = 1;
+	}
+
 	pr_info("[DIT_EEPROM] module_change %d load_file_name %s", module_change[camera_id], load_file_name);
-	if(num>0)
+
+	if(wrong_data == 0)
 	{
 		pr_info("[DIT_EEPROM] read %d bytes from %s",num,load_file_name);
 #ifdef DIT_CHKCALI

@@ -104,6 +104,10 @@ extern bool smartchg_stop_flag;
 bool qc_stat_registed = false;
 static bool usb_thermal_once_flag = false;  //In both MOS and COS when conn_temp >= 700, do not resume charging unless user unplugs and conn_temp <= 500 simultaneously
 int g_usb_otg = 0;
+
+//ASUS_BSP battery safety upgrade +++
+int FV_JEITA_uV = 4360000;
+//ASUS_BSP battery safety upgrade ---
 //[---]ASUS : Add variables
 
 //[+++]ASUS BSP gauge
@@ -1934,9 +1938,11 @@ int smblib_vbus_regulator_enable(struct regulator_dev *rdev)
 	
 	if(batt_capacity <= 15){
 		cam_flash_battery_low(1);
+		asus_extcon_set_state_sync(smbchg_dev->reversechg_extcon, 1);
 	}
 	else{
 		cam_flash_battery_low(0);
+		asus_extcon_set_state_sync(smbchg_dev->reversechg_extcon, 0);
 		schedule_delayed_work(&smbchg_dev->asus_reverse_charge_check_camera, 0);
 	}
 	
@@ -1973,6 +1979,7 @@ int smblib_vbus_regulator_disable(struct regulator_dev *rdev)
 	default_src_caps[0] = 0x360190c8;
 
 	cam_flash_battery_low(0);
+	asus_extcon_set_state_sync(smbchg_dev->reversechg_extcon, 0);
 	
 	return 0;
 }
@@ -5055,13 +5062,13 @@ void jeita_rule(void)
 	switch (state) {
 	case JEITA_STATE_LESS_THAN_0:
 		charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
-		FV_uV = 4360000;
+		FV_uV = FV_JEITA_uV;
 		FCC_uA = 1350000;
 		CHG_DBG("temperature < 0\n");
 		break;
 	case JEITA_STATE_RANGE_0_to_100:
 		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
-		FV_uV = 4360000;
+		FV_uV = FV_JEITA_uV;
 		FCC_uA = 1350000;
 		CHG_DBG("0 <= temperature < 10\n");
 		rc = SW_recharge(smbchg_dev);
@@ -5071,7 +5078,7 @@ void jeita_rule(void)
 		break;
 	case JEITA_STATE_RANGE_100_to_200:
 		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
-		FV_uV = 4360000;
+		FV_uV = FV_JEITA_uV;
 		FCC_uA = 2300000;
 		CHG_DBG("10 <= temperature < 20\n");
 		rc = SW_recharge(smbchg_dev);
@@ -5082,10 +5089,10 @@ void jeita_rule(void)
 	case JEITA_STATE_RANGE_200_to_450:
 		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
 		if (bat_volt <= 4250000) {
-			FV_uV = 4360000;
+			FV_uV = FV_JEITA_uV;
 			FCC_uA = 3800000;
 		} else {
-			FV_uV = 4360000;
+			FV_uV = FV_JEITA_uV;
 			FCC_uA = 2300000;
 		}
 		CHG_DBG("20 <= temperature < 45\n");
@@ -5097,7 +5104,7 @@ void jeita_rule(void)
 	case JEITA_STATE_RANGE_450_to_550:
 		if (bat_volt >= 4100000 && FV_reg == 0x4C) {
 			charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
-			FV_uV = 4360000;
+			FV_uV = FV_JEITA_uV;
 		} else {
 			charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
 			FV_uV = 4080000;
@@ -5107,13 +5114,13 @@ void jeita_rule(void)
 		break;
 	case JEITA_STATE_LARGER_THAN_550:
 		charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
-		FV_uV = 4360000;
+		FV_uV = FV_JEITA_uV;
 		FCC_uA = 2300000;
 		CHG_DBG("temperature >= 55\n");
 		break;
 	default:
 		charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
-		FV_uV = 4360000;
+		FV_uV = FV_JEITA_uV;
 		FCC_uA = 1350000;
 		CHG_DBG("jeita judge failed, set default setting\n");
 		break;
@@ -5954,15 +5961,21 @@ void asus_reverse_charge_check_camera(struct work_struct *work)
 	
 	if(batt_capacity <= 15){
 		cam_flash_battery_low(1);
+		asus_extcon_set_state_sync(smbchg_dev->reversechg_extcon, 1);
 	}
 	else{
 		schedule_delayed_work(&smbchg_dev->asus_reverse_charge_check_camera, msecs_to_jiffies(1000));
 	}
 }
 
+extern int disable_inov_flag;
 void asus_enable_inov(int enable)
 {
 	int rc;
+	
+	if(disable_inov_flag){
+		enable = 0;
+	}
 	
 	if(enable) {
 		//inov setting: 0x1670 = 0x05, enable INOV
@@ -8320,16 +8333,16 @@ int smblib_init(struct smb_charger *chg)
 		qc_stat_registed = true;
 	}
 	
-	chg->usbotg_extcon = extcon_dev_allocate(asus_extcon_cable);
-	if (IS_ERR(chg->usbotg_extcon)) {
-		rc = PTR_ERR(chg->usbotg_extcon);
-		dev_err(chg->dev, "[BAT][CHG] failed to allocate ASUS usbotg extcon device rc=%d\n", rc);
+	chg->reversechg_extcon = extcon_dev_allocate(asus_extcon_cable);
+	if (IS_ERR(chg->reversechg_extcon)) {
+		rc = PTR_ERR(chg->reversechg_extcon);
+		dev_err(chg->dev, "[BAT][CHG] failed to allocate ASUS reversechg extcon device rc=%d\n", rc);
 	}
 
-	asus_extcon_set_fnode_name(chg->usbotg_extcon, "usb_otg");
-	rc = extcon_dev_register(chg->usbotg_extcon);
+	asus_extcon_set_fnode_name(chg->reversechg_extcon, "reverse_charging");
+	rc = extcon_dev_register(chg->reversechg_extcon);
 	if (rc < 0) {
-		dev_err(chg->dev, "[BAT][CHG] failed to register ASUS usbotg extcon device rc=%d\n", rc);
+		dev_err(chg->dev, "[BAT][CHG] failed to register ASUS reversechg extcon device rc=%d\n", rc);
 	}
 //[---]ASUS extcon registration
 

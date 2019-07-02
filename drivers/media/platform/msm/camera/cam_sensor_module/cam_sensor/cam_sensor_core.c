@@ -1046,7 +1046,7 @@ int cam_sensor_power_up(struct cam_sensor_ctrl_t *s_ctrl)
 		}
 	}
 
-	rc = cam_sensor_core_power_up(power_info, soc_info);
+	rc = cam_sensor_core_power_up(power_info, soc_info, &(s_ctrl->io_master_info));
 	if (rc < 0) {
 		CAM_ERR(CAM_SENSOR, "power up the core is failed:%d", rc);
 		return rc;
@@ -1084,7 +1084,7 @@ int cam_sensor_power_down(struct cam_sensor_ctrl_t *s_ctrl)
 		CAM_ERR(CAM_SENSOR, "failed: power_info %pK", power_info);
 		return -EINVAL;
 	}
-	rc = cam_sensor_util_power_down(power_info, soc_info);
+	rc = cam_sensor_util_power_down(power_info, soc_info, &(s_ctrl->io_master_info));
 	if (rc < 0) {
 		CAM_ERR(CAM_SENSOR, "power down the core is failed:%d", rc);
 		return rc;

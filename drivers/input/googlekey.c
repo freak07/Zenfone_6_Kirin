@@ -19,10 +19,12 @@
 #define GOOGLEKEY_DEVICE_NAME		"googlekey_input"
 #define GOOGLEKEY_PHYS		"/dev/input/googlekey_indev"
 #define CONVERSION_TIME_MS	15
+#define  DEBOUNCE_TIME_MS	10
+static DEFINE_SPINLOCK(googlekey_slock);
 
 #define GOOGLE_KEY_AVOID_GLITCH 1
 #ifdef GOOGLE_KEY_AVOID_GLITCH
-static int cancel_key_send = 0;
+//static int cancel_key_send = 0;
 #define MIN_AWAKE_TIME_MS	3000
 #define GLITCH_RETRY_COUNT	0
 #endif
@@ -30,6 +32,7 @@ static int cancel_key_send = 0;
 static int g_google_key_code = KEY_ASUS_GOOGLE_ASSISTANT;
 
 static void googlekey_report_function(struct work_struct *work);
+static void googlekey_double_check(struct work_struct *work);
 static ssize_t show_googlekey_status(struct device *dev,
 		struct device_attribute *attr, char *buf);
 
@@ -37,11 +40,15 @@ struct asustek_googlekey_drvdata {
 	struct input_dev *input;
 	struct pinctrl *key_pinctrl;
 	struct delayed_work dwork;
+	struct delayed_work dcwork;
 	int gpio;
 	int active_low;
 	int wakeup;
 	unsigned int irq;
 #ifdef GOOGLE_KEY_AVOID_GLITCH
+	bool sendVirtualPress;
+	int oldGpioValue;
+	int keyState;
 	bool key_press_queued;
 	bool key_release_queued;
 	bool key_cancel_able;
@@ -149,20 +156,49 @@ static irqreturn_t googlekey_interrupt_handler(int irq, void *dev_id)
 {
 	struct asustek_googlekey_drvdata *ddata = dev_id;
 #ifdef GOOGLE_KEY_AVOID_GLITCH
-	static ktime_t press_key_time = 0;
-	ktime_t release_key_time = 0;
-	long int key_duration;
+	ktime_t getKeyTime = 0;
+	static ktime_t oldGetKeyTime = 0;
+	//static ktime_t press_key_time = 0;
+	//ktime_t release_key_time = 0;
+	long int key_duration=DEBOUNCE_TIME_MS;
 	int gpiovalue = 0;
-	int retry=0;
+
+	//int retry=0;
 #endif
 	//printk("[keypad] googlekey_interrupt_handler\n");
 	WARN_ONCE(irq != ddata->irq, "googlekey_interrupt failed\n");
 
 #ifdef GOOGLE_KEY_AVOID_GLITCH
-	while( retry <= GLITCH_RETRY_COUNT ) { // try tree times for stable
+	//while( retry <= GLITCH_RETRY_COUNT ) { // try tree times for stable
 		gpiovalue = gpio_get_value(ddata->gpio);
-		//printk("[GOOGLEKEY] gpio: %d \n",gpiovalue); // press is 0, release is 1
 
+		getKeyTime = ktime_get();
+		if(oldGetKeyTime)
+			key_duration = ktime_to_ms(ktime_sub(getKeyTime,oldGetKeyTime));
+		oldGetKeyTime=getKeyTime;
+		if(key_duration < DEBOUNCE_TIME_MS)
+			return IRQ_HANDLED;
+
+		printk("[keypad] googlekey gpio: %d \n",gpiovalue); // press is 0, release is 1
+
+		if (ddata->oldGpioValue == gpiovalue){
+			if (gpiovalue == 0 ){
+				gpiovalue=1; 
+				printk("[keypad] googlekey should be Release, inverse for report correct key !!!\n");
+			}else if(gpiovalue == 1){
+				printk("[keypad] googlekey lost Press, send virtual press !!!\n");
+				ddata->sendVirtualPress = true;
+			}
+		}
+		ddata->oldGpioValue = gpiovalue;
+		if (gpiovalue)
+			ddata->key_release_queued = true;
+		else
+			ddata->key_press_queued = true;
+		schedule_delayed_work(&ddata->dwork, msecs_to_jiffies(CONVERSION_TIME_MS));
+
+		//printk("[GOOGLEKEY] gpio: %d \n",gpiovalue); // press is 0, release is 1
+/*
 		if( gpiovalue == 0 ) {
 			// press key
 			if(ddata->key_press_queued == false && ddata->key_release_queued == false) {
@@ -208,7 +244,8 @@ static irqreturn_t googlekey_interrupt_handler(int irq, void *dev_id)
 				retry++;
 			}
 		}
-	}
+		*/
+	//}
 #else
 
 	schedule_delayed_work(&ddata->dwork,
@@ -222,7 +259,8 @@ static void googlekey_report_function(struct work_struct *work)
 {
 	struct asustek_googlekey_drvdata *ddata =
 		container_of(work, struct asustek_googlekey_drvdata, dwork.work);
-	int value;
+	//int value;
+	unsigned long flags;
 
 	if(g_googlekey_enable == 0)
 	{
@@ -231,6 +269,39 @@ static void googlekey_report_function(struct work_struct *work)
 	}
 
 #ifdef GOOGLE_KEY_AVOID_GLITCH
+	spin_lock_irqsave(&googlekey_slock, flags);
+
+	if (ddata->sendVirtualPress){
+		input_report_key(ddata->input, g_google_key_code, 1);
+		input_sync(ddata->input);
+		ddata->sendVirtualPress = false;
+		ddata->keyState = 1;
+		pr_info("[keypad] googlekey Virtual Press report\n");
+		msleep(15);
+	}
+
+	if (ddata->key_press_queued){
+		input_report_key(ddata->input, g_google_key_code, 1);
+		input_sync(ddata->input);
+		ddata->key_press_queued = false;
+		ddata->keyState = 1;
+		pr_info("[keypad] googlekey EV_KEY report = %d\n",  1);
+		if(ddata->key_release_queued)
+			msleep(15);
+		else
+			schedule_delayed_work(&ddata->dcwork, msecs_to_jiffies(300));
+	}
+
+	if (ddata->key_release_queued){
+		input_report_key(ddata->input, g_google_key_code, 0);
+		input_sync(ddata->input);
+		ddata->key_release_queued = false;
+		ddata->keyState = 0;
+		pr_info("[keypad] googlekey EV_KEY report = %d\n",  0);
+	}
+
+	spin_unlock_irqrestore(&googlekey_slock, flags);
+/*
 	if(cancel_key_send) {
 		pr_info("[keypad] googlekey glitch, avoid to send key\n");
 	} else {
@@ -257,6 +328,7 @@ static void googlekey_report_function(struct work_struct *work)
 			ddata->key_release_queued = false;
 		}
 	}
+	*/
 #else
 	value = !!gpio_get_value_cansleep(ddata->gpio) ^ ddata->active_low;
 
@@ -267,6 +339,28 @@ static void googlekey_report_function(struct work_struct *work)
 
 }
 
+static void googlekey_double_check(struct work_struct *work)
+{
+	struct asustek_googlekey_drvdata *ddata =
+		container_of(work, struct asustek_googlekey_drvdata, dcwork.work);
+	unsigned long flags;
+	spin_lock_irqsave(&googlekey_slock, flags);
+	if(ddata->keyState)
+	{
+		int gpiovalue = 0;
+		gpiovalue = gpio_get_value(ddata->gpio);
+		//pr_info("[keypad] googlekey double_check gpio = %d\n", gpiovalue);
+		if(gpiovalue){
+			input_report_key(ddata->input, g_google_key_code, 0);
+			input_sync(ddata->input);
+			ddata->key_release_queued = false;
+			ddata->keyState = 0;
+			ddata->oldGpioValue=1;//avoid gpio detect 0->0 to do inverse handle
+			pr_info("[keypad] googlekey Virtual Release report\n");
+		}
+	}
+	spin_unlock_irqrestore(&googlekey_slock, flags);
+}
 /* translate openfirmware node properties */
 static int __init asustek_googlekey_get_devtree(struct device *dev)
 {
@@ -398,8 +492,12 @@ static int __init googlekey_driver_probe(struct platform_device *pdev)
 	}
 
 	INIT_DELAYED_WORK(&ddata->dwork, googlekey_report_function);
+	INIT_DELAYED_WORK(&ddata->dcwork, googlekey_double_check);
 
 #ifdef GOOGLE_KEY_AVOID_GLITCH
+	ddata->sendVirtualPress = false;
+	ddata->oldGpioValue = 2;
+	ddata->keyState = 0;
 	ddata->key_press_queued = false;
 	ddata->key_release_queued = false;
 	ddata->key_cancel_able = true;

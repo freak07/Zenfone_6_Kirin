@@ -68,6 +68,7 @@ static int audio_ext_clk_prepare(struct clk_hw *hw)
 	struct pinctrl_info *pnctrl_info = &clk_priv->audio_clk.pnctrl_info;
 	int ret;
 
+	printk("audio-ext-clk-up: %s: clk_src: %d\n", __func__, clk_priv->clk_src);
 	if ((clk_priv->clk_src >= AUDIO_EXT_CLK_LPASS) &&
 		(clk_priv->clk_src < AUDIO_EXT_CLK_LPASS_MAX))  {
 		clk_priv->clk_cfg.enable = 1;
@@ -80,6 +81,7 @@ static int audio_ext_clk_prepare(struct clk_hw *hw)
 	}
 
 	if (pnctrl_info->pinctrl) {
+		printk("audio-ext-clk-up: %s: pinctrl\n", __func__);
 		ret = pinctrl_select_state(pnctrl_info->pinctrl,
 				pnctrl_info->active);
 		if (ret) {
@@ -89,8 +91,10 @@ static int audio_ext_clk_prepare(struct clk_hw *hw)
 		}
 	}
 
-	if (pnctrl_info->base)
+	if (pnctrl_info->base) {
+		printk("audio-ext-clk-up: %s: write 1 to pinctrl base\n", __func__);
 		iowrite32(1, pnctrl_info->base);
+	}
 	return 0;
 }
 
@@ -100,7 +104,9 @@ static void audio_ext_clk_unprepare(struct clk_hw *hw)
 	struct pinctrl_info *pnctrl_info = &clk_priv->audio_clk.pnctrl_info;
 	int ret;
 
+	printk("audio-ext-clk-up: %s: clk_src: %d\n", __func__, clk_priv->clk_src);
 	if (pnctrl_info->pinctrl) {
+		printk("audio-ext-clk-up: %s: pinctrl\n", __func__);
 		ret = pinctrl_select_state(pnctrl_info->pinctrl,
 					   pnctrl_info->sleep);
 		if (ret) {
@@ -119,8 +125,10 @@ static void audio_ext_clk_unprepare(struct clk_hw *hw)
 				__func__, ret);
 	}
 
-	if (pnctrl_info->base)
+	if (pnctrl_info->base) {
+		printk("audio-ext-clk-up: %s: write 0 to pinctrl base\n", __func__);
 		iowrite32(0, pnctrl_info->base);
+	}
 }
 
 static u8 audio_ext_clk_get_parent(struct clk_hw *hw)

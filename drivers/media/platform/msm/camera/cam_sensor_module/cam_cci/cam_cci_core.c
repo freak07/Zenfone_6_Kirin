@@ -1230,6 +1230,14 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 		goto rel_mutex;
 	}
 
+	if (completion_done(
+		&cci_dev->cci_master_info[master].reset_complete)) {
+
+		CAM_WARN(CAM_CCI, "reset_complete even before queue_start");
+		reinit_completion(
+			&cci_dev->cci_master_info[master].reset_complete);
+	}
+
 	val = cam_io_r_mb(base + CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR
 			+ master * 0x200 + queue * 0x100);
 	CAM_DBG(CAM_CCI, "cur word cnt 0x%x", val);
@@ -1266,6 +1274,16 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 	if (read_words != exp_words) {
 		CAM_ERR(CAM_CCI, "read_words = %d, exp words = %d",
 			read_words, exp_words);
+
+		/* read out to clean the buffer */
+		CAM_ERR(CAM_CCI, "read out the buffer.");
+		if (read_words > 0) {
+			for (i = 0; i < read_words; i++) {
+				val = cam_io_r_mb(base +
+					CCI_I2C_M0_READ_DATA_ADDR + master * 0x100);
+			}
+		}
+
 		memset(read_cfg->data, 0, read_cfg->num_byte);
 		rc = -EINVAL;
 		goto rel_mutex;
@@ -1690,6 +1708,16 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 		break;
 	case MSM_CCI_SET_SYNC_CID:
 		rc = cam_cci_i2c_set_sync_prms(sd, cci_ctrl);
+		break;
+	case MSM_CCI_I2C_MUTEX_LOCK:
+#ifdef CFG_USE_MUTEX
+		mutex_lock(&cci_dev->mutex_for_conf[master]);
+#endif
+		break;
+	case MSM_CCI_I2C_MUTEX_UNLOCK:
+#ifdef CFG_USE_MUTEX
+		mutex_unlock(&cci_dev->mutex_for_conf[master]);
+#endif
 		break;
 
 	default:

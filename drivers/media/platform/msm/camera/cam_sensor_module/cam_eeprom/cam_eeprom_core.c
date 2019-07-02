@@ -183,7 +183,7 @@ static int cam_eeprom_power_up(struct cam_eeprom_ctrl_t *e_ctrl,
 
 	power_info->dev = soc_info->dev;
 
-	rc = cam_sensor_core_power_up(power_info, soc_info);
+	rc = cam_sensor_core_power_up(power_info, soc_info, &(e_ctrl->io_master_info));
 	if (rc) {
 		CAM_ERR(CAM_EEPROM, "failed in eeprom power up rc %d", rc);
 		return rc;
@@ -226,7 +226,7 @@ static int cam_eeprom_power_down(struct cam_eeprom_ctrl_t *e_ctrl)
 		CAM_ERR(CAM_EEPROM, "failed: power_info %pK", power_info);
 		return -EINVAL;
 	}
-	rc = cam_sensor_util_power_down(power_info, soc_info);
+	rc = cam_sensor_util_power_down(power_info, soc_info, &(e_ctrl->io_master_info));
 	if (rc) {
 		CAM_ERR(CAM_EEPROM, "power down the core is failed:%d", rc);
 		return rc;

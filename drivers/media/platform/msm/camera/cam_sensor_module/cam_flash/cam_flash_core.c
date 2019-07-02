@@ -257,7 +257,7 @@ int cam_flash_i2c_power_ops(struct cam_flash_ctrl *fctrl,
 			}
 		}
 
-		rc = cam_sensor_core_power_up(power_info, soc_info);
+		rc = cam_sensor_core_power_up(power_info, soc_info, &(fctrl->io_master_info));
 		if (rc) {
 			CAM_ERR(CAM_FLASH, "power up the core is failed:%d",
 				rc);
@@ -267,13 +267,13 @@ int cam_flash_i2c_power_ops(struct cam_flash_ctrl *fctrl,
 		rc = camera_io_init(&(fctrl->io_master_info));
 		if (rc) {
 			CAM_ERR(CAM_FLASH, "cci_init failed: rc: %d", rc);
-			cam_sensor_util_power_down(power_info, soc_info);
+			cam_sensor_util_power_down(power_info, soc_info, &(fctrl->io_master_info));
 			goto free_pwr_settings;
 		}
 		fctrl->is_regulator_enabled = true;
 	} else if ((!regulator_enable) &&
 		(fctrl->is_regulator_enabled == true)) {
-		rc = cam_sensor_util_power_down(power_info, soc_info);
+		rc = cam_sensor_util_power_down(power_info, soc_info, &(fctrl->io_master_info));
 		if (rc) {
 			CAM_ERR(CAM_FLASH, "power down the core is failed:%d",
 				rc);

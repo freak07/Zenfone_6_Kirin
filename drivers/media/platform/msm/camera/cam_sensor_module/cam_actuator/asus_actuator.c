@@ -489,7 +489,7 @@ static ssize_t actuator_solo_power_write(struct file *filp, const char __user *b
 			if(g_actuator_power_state == 1)
 			{
 				camera_io_release(&(actuator_ctrl->io_master_info));
-				rc = cam_sensor_util_power_down(power_info, soc_info);
+				rc = cam_sensor_util_power_down(power_info, soc_info, &(actuator_ctrl->io_master_info));
 				if (rc) {
 					pr_err("%s: msm_camera_power_down fail rc = %d\n", __func__, rc);
 				}
@@ -517,7 +517,7 @@ static ssize_t actuator_solo_power_write(struct file *filp, const char __user *b
 							soc_info->clk_name[i]);
 					}
 				}
-				rc = cam_sensor_core_power_up(power_info, soc_info);
+				rc = cam_sensor_core_power_up(power_info, soc_info, &(actuator_ctrl->io_master_info));
 				if (rc) {
 					pr_err("%s: msm_camera_power_up fail rc = %d\n", __func__, rc);
 				}
@@ -563,7 +563,7 @@ int actuator_power_up(struct cam_actuator_ctrl_t *actuator_ctrl)
 		(struct cam_actuator_soc_private *)actuator_ctrl->soc_info.soc_private;
 	struct cam_sensor_power_ctrl_t *power_info = &soc_private->power_info;
 
-	rc = cam_sensor_core_power_up(power_info, soc_info);
+	rc = cam_sensor_core_power_up(power_info, soc_info, &(actuator_ctrl->io_master_info));
 	if (rc) {
 		pr_err("actuator power up failed, rc %d\n", rc);
 		return -1;
@@ -573,7 +573,7 @@ int actuator_power_up(struct cam_actuator_ctrl_t *actuator_ctrl)
 		rc = camera_io_init(&(actuator_ctrl->io_master_info));
 		if (rc < 0) {
 			pr_err("cci init failed!\n");
-			rc = cam_sensor_util_power_down(power_info, soc_info);
+			rc = cam_sensor_util_power_down(power_info, soc_info, &(actuator_ctrl->io_master_info));
 			if (rc) {
 				pr_err("actuator power down failed, rc %d\n", rc);
 			}
@@ -599,7 +599,7 @@ int actuator_power_down(struct cam_actuator_ctrl_t *actuator_ctrl)
 			pr_err("cci release failed!\n");
 	}
 
-	rc = cam_sensor_util_power_down(power_info, soc_info);
+	rc = cam_sensor_util_power_down(power_info, soc_info, &(actuator_ctrl->io_master_info));
 	if (rc) {
 		pr_err("actuator power down failed, rc %d\n", rc);
 	}

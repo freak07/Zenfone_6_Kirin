@@ -3,7 +3,7 @@ qcom,3742266_asus_c11p1806_4850mah_averaged_masterslave_dec13th2018 {
 	qcom,profile-revision = <24>;
 	/* #3742266_Asus_C11P1806_4850mAh_averaged_MasterSlave_Dec13th2018*/
 	qcom,max-voltage-uv = <4360000>;
-	qcom,fg-cc-cv-threshold-mv = <4340>;
+	qcom,fg-cc-cv-threshold-mv = <4350>;
 	qcom,nom-batt-capacity-mah = <4850>;
 
 	/* COLD = 0 DegC, HOT = 55 DegC */

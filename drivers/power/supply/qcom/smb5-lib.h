@@ -513,7 +513,7 @@ struct smb_charger {
 	struct extcon_dev	*thermal_extcon;
 	struct extcon_dev	*water_extcon;
 	struct extcon_dev	*quickchg_extcon;
-	struct extcon_dev	*usbotg_extcon;
+	struct extcon_dev	*reversechg_extcon;
 
 	/* battery profile */
 	int			batt_profile_fcc_ua;

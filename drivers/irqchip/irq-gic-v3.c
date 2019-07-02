@@ -343,6 +343,19 @@ static int gic_suspend(void)
 	return 0;
 }
 
+/*AS-K Log Wake Up IP Address Info+*/
+#define IPA_IRQ_VALUE 107
+static int ipa_resume_irq_flag = 0;
+int ipa_resume_irq_flag_function(void) {
+    if( ipa_resume_irq_flag == 1 ) {
+        ipa_resume_irq_flag = 0;
+        return 1;
+    }
+    return 0;
+}
+EXPORT_SYMBOL(ipa_resume_irq_flag_function);
+/*AS-K Log Wake Up IP Address Info-*/
+
 static void gic_show_resume_irq(struct gic_chip_data *gic)
 {
 	unsigned int i;
@@ -379,6 +392,12 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 			name = desc->action->name;
 
 		pr_warn("%s: %d triggered %s\n", __func__, irq, name);
+
+		/*AS-K Log Wake Up IP Address Info+*/
+		if(irq == IPA_IRQ_VALUE) {
+			ipa_resume_irq_flag = 1;
+                }
+		/*AS-K Log Wake Up IP Address Info-*/
 
 //ASUS_BSP +++ [PM]save IRQ's counts and number
 		if (gic_irq_cnt < 8) {

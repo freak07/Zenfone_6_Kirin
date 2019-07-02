@@ -61,6 +61,12 @@
 							225, void *)
 #define AUDIO_SET_RCV_DEVICE		_IOWR(CAL_IOCTL_MAGIC, \
 							233, void *)
+
+/* ASUS_BSP +++ Add uevent for earpiece checking */
+#define AUDIO_SET_ACTIVEOUTPUT_PID	_IOWR(CAL_IOCTL_MAGIC, \
+							234, void *)
+/* ASUS_BSP --- */
+
 #define AUDIO_DRV_MODE_IN_CALL		2
 #define AUDIO_DRV_MODE_IN_COMMUNICATION	3
 
@@ -123,6 +129,10 @@ enum {
 
 	/* ASUS_BSP +++ Add warning uevent for input occupied issue ( TT1290090 ) */
 	AUDIO_SET_ACTIVEINPUT_PID_TYPE,
+	/* ASUS_BSP --- */
+
+	/* ASUS_BSP +++ Add uevent for earpiece checking */
+	AUDIO_SET_ACTIVEOUTPUT_PID_TYPE,
 	/* ASUS_BSP --- */
 
 	ULP_LSM_TOPOLOGY_ID_CAL_TYPE,
