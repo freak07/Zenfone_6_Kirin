@@ -99,7 +99,7 @@ extern int permissive_enable;
 // ASUS_BSP --- get permissive status
 
 #define FORCE_RAMDUMP_FEATURE 1
-#define FORCE_WD_RESET_FEATURE 1
+//#define FORCE_WD_RESET_FEATURE 1
 
 #define USHRT_MAX	((u16)(~0U))
 #define SHRT_MAX	((s16)(USHRT_MAX>>1))
