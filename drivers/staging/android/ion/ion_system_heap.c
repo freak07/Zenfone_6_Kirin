@@ -198,7 +198,7 @@ static struct page_info *alloc_from_pool_preferred(
 	}
 
 	kfree(info);
-force_alloc:
+	force_alloc:
 	return alloc_largest_available(heap, buffer, size, max_order);
 }
 

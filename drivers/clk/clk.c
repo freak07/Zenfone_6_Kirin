@@ -2992,6 +2992,7 @@ DEFINE_SIMPLE_ATTRIBUTE(clock_enable_fops, clock_debug_enable_get,
  * clock_debug_print_enabled_debug_suspend() - Print names of enabled clocks
  * during suspend.
  */
+extern int msm_dss_clk_voting_counter;
 static void clock_debug_print_enabled_debug_suspend(struct seq_file *s)
 {
 	struct clk_core *core;
@@ -3020,6 +3021,8 @@ static void clock_debug_print_enabled_debug_suspend(struct seq_file *s)
 	}
 
 	mutex_unlock(&clk_debug_lock);
+
+	clock_debug_output(s, 0, "Display clock counter: %d\n", msm_dss_clk_voting_counter);
 
 	if (cnt)
 		clock_debug_output(s, 0, "Enabled clock count: %d\n", cnt);
@@ -3078,6 +3081,8 @@ static void clock_debug_print_enabled_clocks(struct seq_file *s)
 		cnt += clock_debug_print_clock(core, s);
 
 	mutex_unlock(&clk_debug_lock);
+
+	clock_debug_output(s, 0, "Display clock counter: %d\n", msm_dss_clk_voting_counter);
 
 	if (cnt)
 		clock_debug_output(s, 0, "Enabled clock count: %d\n", cnt);
